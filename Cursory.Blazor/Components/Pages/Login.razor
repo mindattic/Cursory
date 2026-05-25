@@ -1,0 +1,39 @@
+@page "/login"
+@layout Layout.MainLayout
+@attribute [Microsoft.AspNetCore.Authorization.AllowAnonymous]
+
+<PageTitle>Sign in · Cursory</PageTitle>
+
+<div class="login-shell">
+    <form method="post" action="/api/auth/login" class="login-card">
+        <h1>Cursory</h1>
+        <p class="login-sub">Cooperative cursor puzzles. Sign in to enter the room.</p>
+        @if (showError)
+        {
+            <div class="login-error">Invalid username or password.</div>
+        }
+        <label>
+            Username
+            <input type="text" name="username" autocomplete="username" autofocus required />
+        </label>
+        <label>
+            Password
+            <input type="password" name="password" autocomplete="current-password" required />
+        </label>
+        <input type="hidden" name="returnUrl" value="@ReturnUrl" />
+        <AntiforgeryToken />
+        <button type="submit">Enter the room</button>
+    </form>
+</div>
+
+@code {
+    [SupplyParameterFromQuery] public string? ReturnUrl { get; set; }
+    [SupplyParameterFromQuery(Name = "error")] public string? ErrorCode { get; set; }
+
+    private bool showError;
+
+    protected override void OnInitialized()
+    {
+        showError = string.Equals(ErrorCode, "invalid", StringComparison.OrdinalIgnoreCase);
+    }
+}

@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <BlazorDisableThrowNavigationException>true</BlazorDisableThrowNavigationException>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Cursory.Core\Cursory.Core.csproj" />
+    <ProjectReference Include="..\Cursory.Shared\Cursory.Shared.csproj" />
+  </ItemGroup>
+
+</Project>

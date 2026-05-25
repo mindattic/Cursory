@@ -1,0 +1,64 @@
+@page "/"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+@rendermode RenderMode.InteractiveServer
+
+<PageTitle>Cursory</PageTitle>
+
+<div class="room-shell">
+    <div class="room-hud">
+        <span class="room-hud-name">@DisplayName</span>
+        <span class="room-hud-dot" style="background:@Color"></span>
+        <span class="room-hud-hint">Drag empty space to pan · click a block to attach a cursor · click to whistle</span>
+        <form method="post" action="/api/auth/logout" class="room-hud-logout">
+            <AntiforgeryToken />
+            <button type="submit">Sign out</button>
+        </form>
+    </div>
+    <div id="room-viewport" class="room-viewport">
+        <canvas id="room-canvas"></canvas>
+    </div>
+</div>
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState> AuthStateTask { get; set; } = default!;
+
+    private string DisplayName { get; set; } = "";
+    private string UserId { get; set; } = "";
+    private string Color { get; set; } = "#7F77DD";
+
+    private IJSObjectReference? jsModule;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask;
+        var user = state.User;
+        DisplayName = user.Identity?.Name ?? "Anon";
+        UserId = user.FindFirst("UserId")?.Value ?? "";
+        Color = user.FindFirst("Color")?.Value ?? "#7F77DD";
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        jsModule = await JS.InvokeAsync<IJSObjectReference>("import", "./js/room.js");
+        await jsModule.InvokeVoidAsync("start", new
+        {
+            userId = UserId,
+            displayName = DisplayName,
+            color = Color,
+            worldWidth = WorldGeometry.Width,
+            worldHeight = WorldGeometry.Height,
+        });
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (jsModule is not null)
+        {
+            try { await jsModule.InvokeVoidAsync("stop"); } catch { }
+            await jsModule.DisposeAsync();
+        }
+    }
+}
