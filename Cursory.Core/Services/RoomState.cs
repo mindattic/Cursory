@@ -17,6 +17,8 @@ public class RoomState
     private readonly ConcurrentDictionary<string, SwitchTile> switches = new();
     private readonly ConcurrentDictionary<string, Door> doors = new();
     private readonly ConcurrentDictionary<string, WorldLabel> labels = new();
+    private readonly ConcurrentDictionary<string, ShapeActor> shapes = new();
+    private readonly ConcurrentDictionary<string, ShapeGoal> shapeGoals = new();
     private readonly ConcurrentQueue<Whistle> whistles = new();
     private const int WhistleRingCapacity = 256;
 
@@ -103,7 +105,54 @@ public class RoomState
 
     public void Detach(string userId)
     {
-        if (cursors.TryGetValue(userId, out var c)) c.AttachedBlockId = null;
+        if (cursors.TryGetValue(userId, out var c))
+        {
+            c.AttachedBlockId = null;
+            c.AttachedShapeId = null;
+        }
+    }
+
+    /// <summary>
+    /// Attach a cursor to a compound rigid shape. <paramref name="clickX"/> / <paramref name="clickY"/>
+    /// are world coordinates; we project them into the shape's body frame (un-rotate, un-translate)
+    /// and store that as the anchor. Each tick, the anchor is re-rotated by the current angle so the
+    /// spring "follows" the body as it rotates.
+    /// </summary>
+    public bool TryAttachShape(string userId, string shapeId, double clickX, double clickY)
+    {
+        if (!cursors.TryGetValue(userId, out var c)) return false;
+        if (!shapes.TryGetValue(shapeId, out var s)) return false;
+        if (!IsFinite(clickX) || !IsFinite(clickY)) return false;
+        // World → body-local: translate by -centre, then rotate by -Angle.
+        var dx = clickX - s.X;
+        var dy = clickY - s.Y;
+        var cos = Math.Cos(-s.Angle);
+        var sin = Math.Sin(-s.Angle);
+        var localX = dx * cos - dy * sin;
+        var localY = dx * sin + dy * cos;
+        // Clamp the anchor to the shape's overall AABB so a hostile client can't claim an
+        // anchor far from the body. A tighter "must be inside at least one piece" check could
+        // be added; the AABB bound is a reasonable safety net.
+        var (minX, minY, maxX, maxY) = ShapeBoundsLocal(s);
+        c.AttachedBlockId = null;
+        c.AttachedShapeId = s.Id;
+        c.AnchorLocalX = Math.Clamp(localX, minX, maxX);
+        c.AnchorLocalY = Math.Clamp(localY, minY, maxY);
+        return true;
+    }
+
+    private static (double minX, double minY, double maxX, double maxY) ShapeBoundsLocal(ShapeActor s)
+    {
+        double minX = double.PositiveInfinity, minY = double.PositiveInfinity;
+        double maxX = double.NegativeInfinity, maxY = double.NegativeInfinity;
+        foreach (var p in s.Pieces)
+        {
+            if (p.LocalX - p.HalfW < minX) minX = p.LocalX - p.HalfW;
+            if (p.LocalY - p.HalfH < minY) minY = p.LocalY - p.HalfH;
+            if (p.LocalX + p.HalfW > maxX) maxX = p.LocalX + p.HalfW;
+            if (p.LocalY + p.HalfH > maxY) maxY = p.LocalY + p.HalfH;
+        }
+        return (minX, minY, maxX, maxY);
     }
 
     public void RecordWhistle(string userId, double x, double y)
@@ -160,6 +209,12 @@ public class RoomState
     internal void AddGoal(GoalZone g) => goals[g.Id] = g;
     /// <summary>Test/seed helper: directly add a world label.</summary>
     internal void AddLabel(WorldLabel l) => labels[l.Id] = l;
+    /// <summary>Test/seed helper: directly add a compound rigid shape.</summary>
+    internal void AddShape(ShapeActor s) => shapes[s.Id] = s;
+    /// <summary>Test/seed helper: directly add a shape goal.</summary>
+    internal void AddShapeGoal(ShapeGoal g) => shapeGoals[g.Id] = g;
+    /// <summary>Test helper: read a shape by id.</summary>
+    internal ShapeActor? GetShape(string id) => shapes.TryGetValue(id, out var s) ? s : null;
     /// <summary>Test helper: register a cursor with explicit position.</summary>
     internal void AddTestCursor(string userId, double x, double y, string color = "#7F77DD")
     {
@@ -184,6 +239,8 @@ public class RoomState
             Goals = goals.Values.Select(CloneGoal).ToList(),
             Switches = switches.Values.Select(CloneSwitch).ToList(),
             Doors = doors.Values.Select(CloneDoor).ToList(),
+            Shapes = shapes.Values.Select(CloneShape).ToList(),
+            ShapeGoals = shapeGoals.Values.Select(CloneShapeGoal).ToList(),
             Whistles = whistles.Where(w => tick - w.Tick < 30).Select(CloneWhistle).ToList(),
         };
     }
@@ -204,7 +261,8 @@ public class RoomState
     {
         UserId = c.UserId, DisplayName = c.DisplayName, Color = c.Color, ConnectionId = c.ConnectionId,
         X = c.X, Y = c.Y, LastInputTick = c.LastInputTick,
-        AttachedBlockId = c.AttachedBlockId, AnchorLocalX = c.AnchorLocalX, AnchorLocalY = c.AnchorLocalY,
+        AttachedBlockId = c.AttachedBlockId, AttachedShapeId = c.AttachedShapeId,
+        AnchorLocalX = c.AnchorLocalX, AnchorLocalY = c.AnchorLocalY,
     };
     private static BlockState CloneBlock(BlockState b) => new()
     {
@@ -231,6 +289,23 @@ public class RoomState
     {
         Id = l.Id, X = l.X, Y = l.Y, Title = l.Title, Subtitle = l.Subtitle,
     };
+    private static ShapeActor CloneShape(ShapeActor s) => new()
+    {
+        Id = s.Id, X = s.X, Y = s.Y, Angle = s.Angle,
+        Vx = s.Vx, Vy = s.Vy, AngVel = s.AngVel,
+        Mass = s.Mass, MomentOfInertia = s.MomentOfInertia,
+        StaticFriction = s.StaticFriction, RotationalFriction = s.RotationalFriction,
+        Color = s.Color,
+        Pieces = s.Pieces.Select(p => new ShapePiece
+        {
+            LocalX = p.LocalX, LocalY = p.LocalY, HalfW = p.HalfW, HalfH = p.HalfH,
+        }).ToList(),
+    };
+    private static ShapeGoal CloneShapeGoal(ShapeGoal g) => new()
+    {
+        Id = g.Id, X = g.X, Y = g.Y, W = g.W, H = g.H,
+        TargetShapeId = g.TargetShapeId, IsSolved = g.IsSolved,
+    };
     private static Whistle CloneWhistle(Whistle w) => new()
     {
         UserId = w.UserId, Color = w.Color, X = w.X, Y = w.Y, Tick = w.Tick,
@@ -244,6 +319,7 @@ public class RoomState
         SeedPuzzleB();
         SeedPuzzleC();
         SeedPuzzleD();
+        SeedPuzzleE();
     }
 
     /// <summary>
@@ -396,6 +472,50 @@ public class RoomState
         };
     }
 
+    /// <summary>
+    /// Puzzle E — "Thread the needle": the headline cooperative-rigid-body level.
+    /// An L-shape sits on the left, a vertical wall with a narrow gap runs down the middle,
+    /// a goal square waits on the right. Two cursors must coordinate force + torque to
+    /// rotate and thread the L through the gap, then drag every piece inside the goal.
+    /// </summary>
+    private void SeedPuzzleE()
+    {
+        // The two wall segments framing the gap. Gap is 800 wide vertically (y 5200..6000),
+        // narrower than the L's outer dimensions (1000 × 1000) but wider than its arm
+        // thickness (300), so threading requires rotating the L to align its arm with the gap.
+        walls["wall-E-top"]    = new Wall { Id = "wall-E-top",    X = 2500, Y = 3000, W = 80, H = 4000 };
+        walls["wall-E-bot"]    = new Wall { Id = "wall-E-bot",    X = 2500, Y = 7200, W = 80, H = 4000 };
+        // Frame the corridor so the L can't be routed around the gap.
+        walls["wall-E-floor"]  = new Wall { Id = "wall-E-floor",  X = 0,    Y = 9200, W = 5000, H = 80 };
+        walls["wall-E-ceil"]   = new Wall { Id = "wall-E-ceil",   X = 0,    Y = 800,  W = 5000, H = 80 };
+
+        const string shapeId = "shape-E";
+        // The L is two AABB pieces in body-local space. Centre of the body frame is the
+        // inside corner of the L. The horizontal arm extends to the right, the vertical
+        // arm extends downward. Outer dimensions ~ 1000 × 1000, arm thickness 300.
+        var horiz = new ShapePiece { LocalX = 350, LocalY = -150, HalfW = 350, HalfH = 150 };
+        var vert  = new ShapePiece { LocalX = -150, LocalY = 350, HalfW = 150, HalfH = 350 };
+        shapes[shapeId] = new ShapeActor
+        {
+            Id = shapeId, X = 1500, Y = 5600,
+            Angle = 0, Mass = 8, MomentOfInertia = 400_000,
+            StaticFriction = 0.6, RotationalFriction = 60,
+            Color = "#D85A30",
+            Pieces = [horiz, vert],
+        };
+        shapeGoals["shape-goal-E"] = new ShapeGoal
+        {
+            Id = "shape-goal-E", X = 3800, Y = 5600, W = 1800, H = 1800,
+            TargetShapeId = shapeId,
+        };
+        labels["label-E"] = new WorldLabel
+        {
+            Id = "label-E", X = 2500, Y = 1200,
+            Title = "E — Thread the needle",
+            Subtitle = "Rotate the L. Pull it through the gap. Both cursors needed.",
+        };
+    }
+
     // ── physics step (called by GameLoopService) ─────────────────────────────
 
     private const double SpringK = 0.025;
@@ -412,6 +532,7 @@ public class RoomState
     {
         UpdateSwitches();
         UpdateDoors();
+        StepShapes();
 
         foreach (var block in blocks.Values)
         {
@@ -461,6 +582,200 @@ public class RoomState
         }
 
         AdvanceTick();
+    }
+
+    // ── compound-rigid-body step ─────────────────────────────────────────────
+
+    private const double ShapeAngularDamping = 0.88;
+    private const double ShapeLinearDamping  = 0.88;
+    private const double ShapeMaxAngVel = 0.06;          // radians per tick
+    private const double ShapeMaxLinearVel = 28;          // world units per tick
+
+    /// <summary>
+    /// One simulation tick for every compound rigid actor. For each attached cursor we
+    /// compute the world-space anchor (rotated body-local), produce a spring force
+    /// F = k * (cursor − anchorWorld), sum forces and torques (τ = r × F where r is
+    /// anchorWorld − bodyCentre), gate on static friction, integrate linear and angular
+    /// motion, and roll back any sub-step that pushed any piece into a wall.
+    /// </summary>
+    private void StepShapes()
+    {
+        foreach (var s in shapes.Values)
+        {
+            double fx = 0, fy = 0, torque = 0;
+            foreach (var c in cursors.Values)
+            {
+                if (c.AttachedShapeId != s.Id) continue;
+                // World anchor = body centre + R(angle) · anchorLocal
+                var cos = Math.Cos(s.Angle);
+                var sin = Math.Sin(s.Angle);
+                var anchorWorldX = s.X + c.AnchorLocalX * cos - c.AnchorLocalY * sin;
+                var anchorWorldY = s.Y + c.AnchorLocalX * sin + c.AnchorLocalY * cos;
+                var fxi = SpringK * (c.X - anchorWorldX);
+                var fyi = SpringK * (c.Y - anchorWorldY);
+                fx += fxi;
+                fy += fyi;
+                // 2D cross product: r × F = rx·Fy − ry·Fx
+                var rx = anchorWorldX - s.X;
+                var ry = anchorWorldY - s.Y;
+                torque += rx * fyi - ry * fxi;
+            }
+
+            // Linear: net force must beat static friction to budge the body.
+            var fmag = Math.Sqrt(fx * fx + fy * fy);
+            if (fmag > s.StaticFriction)
+            {
+                var excess = fmag - s.StaticFriction;
+                s.Vx += (fx / fmag) * excess / s.Mass;
+                s.Vy += (fy / fmag) * excess / s.Mass;
+            }
+
+            // Angular: scale torque to per-tick angular acceleration. Rotational friction
+            // models the body resisting rotation until torque magnitude beats the threshold.
+            var tmag = Math.Abs(torque);
+            if (tmag > s.RotationalFriction)
+            {
+                var excess = tmag - s.RotationalFriction;
+                s.AngVel += Math.Sign(torque) * excess / s.MomentOfInertia;
+            }
+
+            s.Vx *= ShapeLinearDamping;
+            s.Vy *= ShapeLinearDamping;
+            s.AngVel *= ShapeAngularDamping;
+            s.Vx = Math.Clamp(s.Vx, -ShapeMaxLinearVel, ShapeMaxLinearVel);
+            s.Vy = Math.Clamp(s.Vy, -ShapeMaxLinearVel, ShapeMaxLinearVel);
+            s.AngVel = Math.Clamp(s.AngVel, -ShapeMaxAngVel, ShapeMaxAngVel);
+
+            // Try linear move; revert + zero linear velocity if it overlaps a wall.
+            var oldX = s.X; var oldY = s.Y;
+            s.X += s.Vx; s.Y += s.Vy;
+            if (ShapeCollidesWithSolid(s))
+            {
+                s.X = oldX; s.Y = oldY; s.Vx = 0; s.Vy = 0;
+            }
+            // Try angular move; revert + zero angular velocity if it overlaps a wall.
+            var oldA = s.Angle;
+            s.Angle += s.AngVel;
+            if (ShapeCollidesWithSolid(s))
+            {
+                s.Angle = oldA; s.AngVel = 0;
+            }
+
+            // Clamp body centre to the world to avoid drift out of bounds.
+            s.X = Math.Clamp(s.X, 0, WorldGeometry.Width);
+            s.Y = Math.Clamp(s.Y, 0, WorldGeometry.Height);
+        }
+
+        // Shape goals: the shape is "inside" iff every piece's world AABB sits entirely
+        // inside the goal rectangle. Per-piece test is cheap and matches the player intuition
+        // that the whole L has to be in the box, not just its centre.
+        foreach (var g in shapeGoals.Values)
+        {
+            if (!shapes.TryGetValue(g.TargetShapeId, out var s)) { g.IsSolved = false; continue; }
+            var allInside = true;
+            foreach (var p in s.Pieces)
+            {
+                var corners = PieceWorldCorners(s, p);
+                foreach (var (cx, cy) in corners)
+                {
+                    if (cx < g.X - g.W / 2 || cx > g.X + g.W / 2 ||
+                        cy < g.Y - g.H / 2 || cy > g.Y + g.H / 2)
+                    { allInside = false; break; }
+                }
+                if (!allInside) break;
+            }
+            g.IsSolved = allInside;
+        }
+    }
+
+    private bool ShapeCollidesWithSolid(ShapeActor s)
+    {
+        foreach (var p in s.Pieces)
+        {
+            var corners = PieceWorldCorners(s, p);
+            foreach (var w in walls.Values)
+            {
+                if (ObbAabbOverlap(corners, w.X, w.Y, w.W, w.H)) return true;
+            }
+            foreach (var d in doors.Values)
+            {
+                if (!d.IsOpen && ObbAabbOverlap(corners, d.X, d.Y, d.W, d.H)) return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// World-space corners of a body-local AABB after the actor's rotation + translation.
+    /// </summary>
+    private static (double X, double Y)[] PieceWorldCorners(ShapeActor s, ShapePiece p)
+    {
+        var cos = Math.Cos(s.Angle);
+        var sin = Math.Sin(s.Angle);
+        var lx = new[] { p.LocalX - p.HalfW, p.LocalX + p.HalfW, p.LocalX + p.HalfW, p.LocalX - p.HalfW };
+        var ly = new[] { p.LocalY - p.HalfH, p.LocalY - p.HalfH, p.LocalY + p.HalfH, p.LocalY + p.HalfH };
+        var corners = new (double X, double Y)[4];
+        for (var i = 0; i < 4; i++)
+        {
+            corners[i] = (
+                s.X + lx[i] * cos - ly[i] * sin,
+                s.Y + lx[i] * sin + ly[i] * cos);
+        }
+        return corners;
+    }
+
+    /// <summary>
+    /// Separating Axis Theorem between an OBB (given as its four world-space corners) and
+    /// a world AABB. Projects both onto each of the OBB's two axes plus each of the AABB's
+    /// two axes (which are world x / world y); if any projection interval is disjoint,
+    /// the shapes are separated. The 2D OBB has only two unique axes, so four projections
+    /// suffice.
+    /// </summary>
+    private static bool ObbAabbOverlap((double X, double Y)[] corners,
+                                       double ax, double ay, double aw, double ah)
+    {
+        var aabb = new (double X, double Y)[]
+        {
+            (ax - aw / 2, ay - ah / 2),
+            (ax + aw / 2, ay - ah / 2),
+            (ax + aw / 2, ay + ah / 2),
+            (ax - aw / 2, ay + ah / 2),
+        };
+        // Axis 0,1 = AABB axes (world x, world y); 2,3 = OBB axes derived from its edges.
+        var axes = new (double X, double Y)[]
+        {
+            (1, 0),
+            (0, 1),
+            Normalize(corners[1].X - corners[0].X, corners[1].Y - corners[0].Y),
+            Normalize(corners[3].X - corners[0].X, corners[3].Y - corners[0].Y),
+        };
+        foreach (var axis in axes)
+        {
+            ProjectInterval(corners, axis, out var minA, out var maxA);
+            ProjectInterval(aabb,    axis, out var minB, out var maxB);
+            if (maxA < minB || maxB < minA) return false;
+        }
+        return true;
+    }
+
+    private static (double X, double Y) Normalize(double x, double y)
+    {
+        var m = Math.Sqrt(x * x + y * y);
+        if (m < 1e-9) return (1, 0);
+        return (x / m, y / m);
+    }
+
+    private static void ProjectInterval((double X, double Y)[] pts, (double X, double Y) axis,
+                                        out double min, out double max)
+    {
+        min = double.PositiveInfinity;
+        max = double.NegativeInfinity;
+        foreach (var p in pts)
+        {
+            var d = p.X * axis.X + p.Y * axis.Y;
+            if (d < min) min = d;
+            if (d > max) max = d;
+        }
     }
 
     private void MoveBlockAxis(BlockState b, double dx, double dy)

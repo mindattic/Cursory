@@ -27,8 +27,9 @@ const state = {
     // Static geometry — populated once via the "Geometry" message on hub connect.
     geometry: { walls: [], labels: [] },
     // Per-tick dynamic snapshot.
-    snapshot: { tick: 0, cursors: [], blocks: [], goals: [], switches: [], doors: [], whistles: [] },
+    snapshot: { tick: 0, cursors: [], blocks: [], goals: [], switches: [], doors: [], shapes: [], shapeGoals: [], whistles: [] },
     attachedBlockId: null,
+    attachedShapeId: null,
     lastSent: 0,
     whistleAnims: [], // {x, y, color, t0}
     connection: { status: 'connecting' }, // 'connecting' | 'connected' | 'reconnecting' | 'disconnected'
@@ -71,6 +72,14 @@ export async function start(opts) {
         ensureAudio();
         const world = clientToWorld(e.clientX, e.clientY);
         state.mouseWorld = world;
+        // Shape hit-test runs first — compound rigid bodies sit "on top of" simple blocks
+        // in the click-pick order. If neither hits, we fall through to whistle/pan.
+        const shapeHit = pickShape(world.x, world.y);
+        if (shapeHit && connection) {
+            state.attachedShapeId = shapeHit.id;
+            connection.invoke('GrabShape', shapeHit.id, world.x, world.y).catch(noop);
+            return;
+        }
         const hit = pickBlock(world.x, world.y);
         if (hit && connection) {
             state.attachedBlockId = hit.id;
@@ -119,8 +128,9 @@ export async function start(opts) {
             }
         }
         armed = null;
-        if (state.attachedBlockId && connection) {
+        if ((state.attachedBlockId || state.attachedShapeId) && connection) {
             state.attachedBlockId = null;
+            state.attachedShapeId = null;
             connection.invoke('Release').catch(noop);
         }
     };
@@ -212,11 +222,14 @@ function render(now) {
     drawGrid();
     drawLabels();
     drawGoals();
+    drawShapeGoals();
     drawSwitches();
     drawWalls();
     drawDoors();
     drawBlocks();
+    drawShapes();
     drawAttachLines();
+    drawShapeAttachLines();
     drawCursors();
     drawWhistles(now);
 
@@ -353,12 +366,13 @@ function drawAttachLines() {
 }
 
 function drawCursors() {
-    // Build the block-by-id lookup once per frame. The previous implementation did
-    // (snapshot.blocks || []).find(b => b.id === c.attachedBlockId) inside the per-cursor
-    // loop — O(N×M) at scale. With 100 cursors all attached to one of 4 blocks that's a
-    // 400-comparison pass every frame; Map.get is O(1).
+    // Pre-build lookup maps so we don't pay an O(N) find inside the per-cursor render
+    // loop. Same idea covers both attachment kinds: blocks (axis-aligned) and shapes
+    // (rotated rigid bodies).
     const blockById = new Map();
     for (const b of state.snapshot.blocks || []) blockById.set(b.id, b);
+    const shapeById = new Map();
+    for (const s of state.snapshot.shapes || []) shapeById.set(s.id, s);
     for (const c of state.snapshot.cursors || []) {
         const isMe = c.userId === state.me.userId;
         // Rotation: if attached, point inward at anchor; otherwise point up.
@@ -367,6 +381,14 @@ function drawCursors() {
             const b = blockById.get(c.attachedBlockId);
             if (b) {
                 const ax = b.x + c.anchorLocalX, ay = b.y + c.anchorLocalY;
+                rot = Math.atan2(ay - c.y, ax - c.x);
+            }
+        } else if (c.attachedShapeId) {
+            const s = shapeById.get(c.attachedShapeId);
+            if (s) {
+                const cos = Math.cos(s.angle), sin = Math.sin(s.angle);
+                const ax = s.x + c.anchorLocalX * cos - c.anchorLocalY * sin;
+                const ay = s.y + c.anchorLocalX * sin + c.anchorLocalY * cos;
                 rot = Math.atan2(ay - c.y, ax - c.x);
             }
         }
@@ -437,6 +459,95 @@ function drawMinimap() {
         ctx.fillStyle = c.color;
         ctx.fillRect(mx + (c.x / W) * mw - 1, my + (c.y / H) * mh - 1, 3, 3);
     }
+}
+
+function drawShapeGoals() {
+    for (const g of state.snapshot.shapeGoals || []) {
+        ctx.fillStyle = g.isSolved ? 'rgba(29,158,117,0.35)' : 'rgba(216,90,48,0.10)';
+        ctx.strokeStyle = g.isSolved ? 'rgba(29,158,117,0.9)' : 'rgba(216,90,48,0.55)';
+        ctx.lineWidth = 4;
+        ctx.setLineDash(g.isSolved ? [] : [16, 10]);
+        ctx.fillRect(g.x - g.w / 2, g.y - g.h / 2, g.w, g.h);
+        ctx.strokeRect(g.x - g.w / 2, g.y - g.h / 2, g.w, g.h);
+        ctx.setLineDash([]);
+        ctx.fillStyle = 'rgba(255,255,255,0.55)';
+        ctx.font = '28px system-ui';
+        ctx.textAlign = 'center';
+        ctx.fillText(g.isSolved ? 'SOLVED' : 'TARGET', g.x, g.y - g.h / 2 - 16);
+    }
+}
+
+function drawShapes() {
+    for (const s of state.snapshot.shapes || []) {
+        ctx.save();
+        ctx.translate(s.x, s.y);
+        ctx.rotate(s.angle);
+        for (const p of s.pieces || []) {
+            ctx.fillStyle = s.color || '#D85A30';
+            ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+            ctx.lineWidth = 2;
+            ctx.fillRect(p.localX - p.halfW, p.localY - p.halfH, p.halfW * 2, p.halfH * 2);
+            ctx.strokeRect(p.localX - p.halfW, p.localY - p.halfH, p.halfW * 2, p.halfH * 2);
+        }
+        // A tiny dot at the body centre to make rotation visible at a glance.
+        ctx.fillStyle = 'rgba(255,255,255,0.4)';
+        ctx.beginPath();
+        ctx.arc(0, 0, 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+    }
+}
+
+function drawShapeAttachLines() {
+    // Dotted pull line: anchor → cursor. Longer = harder pull. Visual cue mentioned
+    // in the design brief; doubles as a debug overlay so the spring force is legible.
+    const shapeById = new Map();
+    for (const s of state.snapshot.shapes || []) shapeById.set(s.id, s);
+    for (const c of state.snapshot.cursors || []) {
+        if (!c.attachedShapeId) continue;
+        const s = shapeById.get(c.attachedShapeId);
+        if (!s) continue;
+        const cos = Math.cos(s.angle), sin = Math.sin(s.angle);
+        const ax = s.x + c.anchorLocalX * cos - c.anchorLocalY * sin;
+        const ay = s.y + c.anchorLocalX * sin + c.anchorLocalY * cos;
+        const dist = Math.hypot(c.x - ax, c.y - ay);
+        // Thicker + brighter as distance grows. Scaled so a ~150-unit pull is fully saturated.
+        const t = Math.min(1, dist / 200);
+        ctx.setLineDash([14, 10]);
+        ctx.lineDashOffset = -(performance.now() / 30) % 24;
+        ctx.strokeStyle = withAlpha(c.color, 0.35 + 0.55 * t);
+        ctx.lineWidth = 2 + 4 * t;
+        ctx.beginPath();
+        ctx.moveTo(ax, ay);
+        ctx.lineTo(c.x, c.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.lineDashOffset = 0;
+        // Anchor knob
+        ctx.fillStyle = c.color;
+        ctx.beginPath();
+        ctx.arc(ax, ay, 5, 0, Math.PI * 2);
+        ctx.fill();
+    }
+}
+
+function pickShape(wx, wy) {
+    // World point inside any piece of any shape (after rotation). Pieces are AABBs in
+    // body-local space, so the hit test is: inverse-rotate the world point into the body
+    // frame, then standard AABB test against each piece. Returns the shape (not the piece).
+    for (const s of state.snapshot.shapes || []) {
+        const cos = Math.cos(-s.angle), sin = Math.sin(-s.angle);
+        const dx = wx - s.x, dy = wy - s.y;
+        const lx = dx * cos - dy * sin;
+        const ly = dx * sin + dy * cos;
+        for (const p of s.pieces || []) {
+            if (lx > p.localX - p.halfW && lx < p.localX + p.halfW &&
+                ly > p.localY - p.halfH && ly < p.localY + p.halfH) {
+                return s;
+            }
+        }
+    }
+    return null;
 }
 
 function pickBlock(wx, wy) {

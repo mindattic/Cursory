@@ -240,6 +240,90 @@ public class RoomStateTests
         Assert.Null(room.GetCursor("u1"));
     }
 
+    /// <summary>
+    /// Puzzle E: a single cursor below the linear friction threshold can't move the L-shape.
+    /// Mirrors the Single_cursor_under_threshold_cannot_move_block invariant.
+    /// </summary>
+    [Fact]
+    public void Shape_single_cursor_under_threshold_cannot_move_shape()
+    {
+        var room = new RoomState();
+        var s = new ShapeActor
+        {
+            Id = "s", X = CX, Y = CY, Mass = 8, MomentOfInertia = 400_000,
+            StaticFriction = 0.6, RotationalFriction = 60,
+            Pieces = [ new ShapePiece { LocalX = 0, LocalY = 0, HalfW = 200, HalfH = 50 } ],
+        };
+        room.AddShape(s);
+        room.AddTestCursor("u1", CX, CY);
+        room.TryAttachShape("u1", "s", CX, CY);
+        // 20 units of pull → spring force k*20 = 0.5 < 0.6 threshold.
+        room.GetCursor("u1")!.X = CX + 20;
+
+        var startX = s.X; var startA = s.Angle;
+        for (var i = 0; i < 60; i++) room.Step();
+        Assert.Equal(startX, s.X, precision: 3);
+        Assert.Equal(startA, s.Angle, precision: 3);
+    }
+
+    /// <summary>
+    /// Puzzle E: two cooperating cursors pulling the same direction on opposite ends of
+    /// the L produce a strong torque, rotating the shape — the mechanic that lets a team
+    /// rotate a body to fit through a gap.
+    /// </summary>
+    [Fact]
+    public void Shape_offset_cursors_generate_torque_and_rotate()
+    {
+        var room = new RoomState();
+        var s = new ShapeActor
+        {
+            Id = "s", X = CX, Y = CY, Mass = 8, MomentOfInertia = 200_000,
+            StaticFriction = 0.6, RotationalFriction = 20,
+            Pieces = [ new ShapePiece { LocalX = 0, LocalY = 0, HalfW = 300, HalfH = 50 } ],
+        };
+        room.AddShape(s);
+        // Two cursors grab opposite ends of the bar.
+        room.AddTestCursor("u1", CX - 250, CY);
+        room.AddTestCursor("u2", CX + 250, CY);
+        room.TryAttachShape("u1", "s", CX - 250, CY);
+        room.TryAttachShape("u2", "s", CX + 250, CY);
+        // Pull in opposite y directions — produces a couple (pure torque, near-zero net force).
+        room.GetCursor("u1")!.Y = CY + 200;
+        room.GetCursor("u2")!.Y = CY - 200;
+
+        for (var i = 0; i < 240; i++) room.Step();
+        // The shape rotated noticeably.
+        Assert.True(Math.Abs(s.Angle) > 0.1, $"Expected rotation, got Angle={s.Angle}");
+    }
+
+    /// <summary>
+    /// A wall blocks linear shape motion until the body is rotated to fit through a gap.
+    /// </summary>
+    [Fact]
+    public void Shape_cannot_translate_through_solid_wall()
+    {
+        var room = new RoomState();
+        var s = new ShapeActor
+        {
+            Id = "s", X = CX, Y = CY, Mass = 4, MomentOfInertia = 200_000,
+            StaticFriction = 0.3, RotationalFriction = 999_999,  // angular lock for this test
+            Pieces = [ new ShapePiece { LocalX = 0, LocalY = 0, HalfW = 200, HalfH = 50 } ],
+        };
+        room.AddShape(s);
+        room.AddWall(new Wall { Id = "w", X = CX + 400, Y = CY, W = 60, H = 5000 });
+        room.AddTestCursor("u1", CX, CY);
+        room.AddTestCursor("u2", CX, CY);
+        room.TryAttachShape("u1", "s", CX, CY);
+        room.TryAttachShape("u2", "s", CX, CY);
+        room.GetCursor("u1")!.X = CX + 600;
+        room.GetCursor("u2")!.X = CX + 600;
+
+        for (var i = 0; i < 240; i++) room.Step();
+        // Wall left edge at CX+370. Piece right extent in body frame: localX+halfW = 200.
+        // Body centre can sit at most at wall_left - piece_extent = CX+370 - 200 = CX+170.
+        Assert.True(s.X <= CX + 170 + 5, $"Shape phased through wall: X={s.X}");
+    }
+
     [Fact]
     public void Detach_removes_cursor_force_from_block()
     {

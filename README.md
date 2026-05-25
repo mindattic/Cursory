@@ -84,8 +84,33 @@ other Blazor entries (the workflow file lives in this repo at
 - [x] Cooperative-drag puzzle (one block, one goal zone)
 - [x] Pannable 10 000 × 10 000 world with minimap
 - [x] Whistle on click, per-colour tone
-- [ ] More puzzles: tiles that open doors when a cursor stands on them; ropes
-      connecting two objects; tug-of-war doors that need N cursors holding open
+- [x] Switch tiles, gated doors, wall collision, maze puzzle
+- [x] Compound rigid body with rotation — L-shape thread-the-needle level (Puzzle E)
+- [x] Dotted "pull line" anchor → cursor (length scales with force)
+- [x] Connection-status pill in the HUD; SignalR auto-reconnect
+- [x] Stale-cursor eviction (ghost cleanup after silent disconnects)
+- [x] Static geometry off the tick stream (walls + labels delivered once on connect)
+- [x] Azure App Service workflow + `MindAttic.Deploy/projects.json` entry (idle until App Service exists)
 - [ ] Multiple rooms / lobby
-- [ ] Azure App Service deploy wiring through `MindAttic.Deploy`
 - [ ] Per-room state persistence (currently in-memory)
+- [ ] Mobile (touch) input
+
+## Deploy
+
+`.github/workflows/azure-deploy.yml` mirrors StreetSamurai's two-stage build/publish/deploy.
+On push to `main`, it restores + publishes `Cursory.Blazor`, uploads the artifact, and lands
+it on the `cursory` App Service slot at **https://cursory.azurewebsites.net**.
+
+To turn the deploy on (one-time):
+
+1. **Provision** an Azure App Service named `cursory` (Windows or Linux, .NET 10 runtime).
+2. **Download** the publish profile from the App Service → *Get publish profile* in the
+   Azure portal.
+3. **Add** the GitHub secret `AZURE_WEBAPP_PUBLISH_PROFILE` in `mindattic/Cursory` →
+   *Settings* → *Secrets and variables* → *Actions*. Paste the entire XML.
+4. **Push** to `main`. The workflow runs and deploys.
+5. **Flip** `MindAttic.Deploy/projects.json → apps[].cursory.disabled` to `false` so the
+   shared CLI surface knows the app is live.
+
+Once steps 1–4 are done, every push to `main` re-deploys. Share the URL plus one of the
+seeded credentials with a teammate and you can both log in to the same instance.

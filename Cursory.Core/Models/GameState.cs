@@ -21,7 +21,11 @@ public class CursorState
 
     /// <summary>Block this cursor is currently attached to, if any. Server-managed.</summary>
     public string? AttachedBlockId { get; set; }
-    /// <summary>Anchor in the block's local space (the point under the cursor at grab time).</summary>
+    /// <summary>Compound shape (ShapeActor) this cursor is attached to, if any. Mutually exclusive with AttachedBlockId.</summary>
+    public string? AttachedShapeId { get; set; }
+    /// <summary>Anchor in the body's local space. For blocks (axis-aligned), local = world − block centre.
+    /// For shapes, local space is the body frame BEFORE rotation; the world anchor each tick is
+    /// (X,Y) + Rotate(anchorLocal, Angle).</summary>
     public double AnchorLocalX { get; set; }
     public double AnchorLocalY { get; set; }
 }
@@ -134,6 +138,61 @@ public class WorldLabel
 }
 
 /// <summary>
+/// One AABB-in-local-space piece of a compound rigid actor (e.g. one arm of an L). The
+/// piece's centre sits at (LocalX, LocalY) in the actor's body-local frame; HalfW/HalfH
+/// define the extent. World position is computed each tick by rotating the local centre
+/// by the actor's Angle and adding the actor's world centre.
+/// </summary>
+public class ShapePiece
+{
+    public double LocalX { get; set; }
+    public double LocalY { get; set; }
+    public double HalfW { get; set; }
+    public double HalfH { get; set; }
+}
+
+/// <summary>
+/// Compound rigid actor with rotation. The shape is built from one or more <see cref="ShapePiece"/>
+/// rectangles in body-local space, so an L is two pieces joined at a corner. Unlike <see cref="BlockState"/>
+/// (axis-aligned, no rotation), this carries Angle + AngVel and resolves forces via torque
+/// (r × F) so cooperating cursors can rotate the body to thread it through a narrow gap. Collision
+/// against walls uses the Separating Axis Theorem against each piece's oriented box.
+/// </summary>
+public class ShapeActor
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public double X { get; set; }
+    public double Y { get; set; }
+    /// <summary>Body-frame rotation in radians, anti-clockwise from world x-axis.</summary>
+    public double Angle { get; set; }
+    public double Vx { get; set; }
+    public double Vy { get; set; }
+    /// <summary>Angular velocity in radians per tick.</summary>
+    public double AngVel { get; set; }
+    public double Mass { get; set; } = 6;
+    /// <summary>Moment of inertia. Higher = harder to rotate. Computed from the pieces.</summary>
+    public double MomentOfInertia { get; set; } = 2_000_000;
+    public double StaticFriction { get; set; } = 1.2;
+    /// <summary>Rotational static-friction threshold. Net torque must exceed this to start rotating.</summary>
+    public double RotationalFriction { get; set; } = 200;
+    public string Color { get; set; } = "#7F77DD";
+    public List<ShapePiece> Pieces { get; set; } = [];
+}
+
+/// <summary>
+/// A cursor's grab anchor on a compound rigid actor. Anchor lives in body-local coordinates;
+/// rotating it by the actor's current Angle and translating by (X, Y) gives the anchor's
+/// world position, which is what the spring force pulls toward.
+/// </summary>
+public class ShapeAttachment
+{
+    public string UserId { get; set; } = "";
+    public string ShapeId { get; set; } = "";
+    public double AnchorLocalX { get; set; }
+    public double AnchorLocalY { get; set; }
+}
+
+/// <summary>
 /// Static world geometry sent ONCE per connection (when the client subscribes) instead
 /// of on every tick. Walls + Labels never change at runtime, so re-sending them at 30 Hz
 /// is wasted bandwidth — at 100 cursors × 30 ticks/sec the savings are non-trivial.
@@ -144,6 +203,22 @@ public class WorldGeometryMessage
     public double WorldHeight { get; set; }
     public List<Wall> Walls { get; set; } = [];
     public List<WorldLabel> Labels { get; set; } = [];
+}
+
+/// <summary>
+/// A square zone that's "satisfied" when every piece of the target compound shape is
+/// inside its bounds. Used by Puzzle E — the L-shape has to be fully threaded into the
+/// goal square before the level is solved.
+/// </summary>
+public class ShapeGoal
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public double X { get; set; }
+    public double Y { get; set; }
+    public double W { get; set; }
+    public double H { get; set; }
+    public string TargetShapeId { get; set; } = "";
+    public bool IsSolved { get; set; }
 }
 
 /// <summary>
@@ -159,6 +234,8 @@ public class WorldSnapshot
     public List<GoalZone> Goals { get; set; } = [];
     public List<SwitchTile> Switches { get; set; } = [];
     public List<Door> Doors { get; set; } = [];
+    public List<ShapeActor> Shapes { get; set; } = [];
+    public List<ShapeGoal> ShapeGoals { get; set; } = [];
     public List<Whistle> Whistles { get; set; } = [];
 }
 

@@ -59,6 +59,15 @@ public class RoomHub : Hub
         return Task.CompletedTask;
     }
 
+    /// <summary>Click on a compound rigid shape — attach this cursor at the click point.</summary>
+    public Task GrabShape(string shapeId, double x, double y)
+    {
+        var userId = Context.User?.FindFirst("UserId")?.Value;
+        if (string.IsNullOrEmpty(userId)) return Task.CompletedTask;
+        room.TryAttachShape(userId, shapeId, x, y);
+        return Task.CompletedTask;
+    }
+
     /// <summary>Mouse up — detach this cursor.</summary>
     public Task Release()
     {
