@@ -7,7 +7,7 @@
 describe('Cursory HUD — level select + reset', () => {
   beforeEach(() => {
     cy.visit('/login');
-    cy.get('input[name="username"]').type('GunGreenEyes');
+    cy.get('input[name="username"]').type('gungreeneyes');
     cy.get('input[name="password"]').type('Happygirl1005');
     cy.get('form.login-card').submit();
     cy.get('#room-canvas', { timeout: 15000 }).should('be.visible');

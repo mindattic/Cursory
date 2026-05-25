@@ -17,7 +17,7 @@ your only voice is a *whistle* every time you click.
 Mirrors the StreetSamurai membership pattern: cookie auth, BCrypt, per-account
 lockout, security-stamp revalidation, antiforgery on every form, per-IP rate
 limit on login. Adapted to **username**-based accounts because the two seeded
-players (`GunGreenEyes`, `GideonKain`) are usernames, not emails.
+players (`gungreeneyes`, `gideonkain`) are usernames, not emails.
 
 ## How the multiplayer works
 
@@ -55,8 +55,8 @@ because the operator chose them verbatim:
 
 | Username       | Password         | Colour    |
 | -------------- | ---------------- | --------- |
-| `GunGreenEyes` | `Happygirl1005`  | `#D85A30` |
-| `GideonKain`   | `Happygirl1005`  | `#378ADD` |
+| `gungreeneyes` | `Happygirl1005`  | `#D85A30` |
+| `gideonkain`   | `Happygirl1005`  | `#378ADD` |
 
 New accounts created via the API have to satisfy the strict policy (≥8 chars,
 upper + lower + digit + special).

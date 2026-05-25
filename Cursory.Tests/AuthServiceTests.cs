@@ -27,35 +27,35 @@ public class AuthServiceTests
     [Test]
     public void SeedUser_creates_account_on_first_call()
     {
-        auth.SeedUser("GunGreenEyes", "GunGreenEyes", "Happygirl1005", UserRoles.Player, "#D85A30");
-        Assert.That(repo.GetByUsername("GunGreenEyes"), Is.Not.Null);
+        auth.SeedUser("gungreeneyes", "gungreeneyes", "Happygirl1005", UserRoles.Player, "#D85A30");
+        Assert.That(repo.GetByUsername("gungreeneyes"), Is.Not.Null);
     }
 
     [Test]
     public void SeedUser_is_idempotent()
     {
-        auth.SeedUser("GunGreenEyes", "GunGreenEyes", "Happygirl1005", UserRoles.Player, "#D85A30");
-        auth.SeedUser("GunGreenEyes", "GunGreenEyes", "different",     UserRoles.Player, "#D85A30");
+        auth.SeedUser("gungreeneyes", "gungreeneyes", "Happygirl1005", UserRoles.Player, "#D85A30");
+        auth.SeedUser("gungreeneyes", "gungreeneyes", "different",     UserRoles.Player, "#D85A30");
         Assert.That(repo.Count, Is.EqualTo(1));
         // The second SeedUser must NOT overwrite the password.
-        var user = auth.Authenticate("GunGreenEyes", "Happygirl1005");
+        var user = auth.Authenticate("gungreeneyes", "Happygirl1005");
         Assert.That(user, Is.Not.Null);
     }
 
     [Test]
     public void Authenticate_succeeds_with_seeded_password_that_violates_policy()
     {
-        auth.SeedUser("GideonKain", "GideonKain", "Happygirl1005", UserRoles.Player, "#378ADD");
-        var user = auth.Authenticate("GideonKain", "Happygirl1005");
+        auth.SeedUser("gideonkain", "gideonkain", "Happygirl1005", UserRoles.Player, "#378ADD");
+        var user = auth.Authenticate("gideonkain", "Happygirl1005");
         Assert.That(user, Is.Not.Null);
-        Assert.That(user!.Username, Is.EqualTo("GideonKain"));
+        Assert.That(user!.Username, Is.EqualTo("gideonkain"));
     }
 
     [Test]
     public void Authenticate_returns_null_on_wrong_password()
     {
-        auth.SeedUser("GunGreenEyes", "GunGreenEyes", "Happygirl1005", UserRoles.Player, "#D85A30");
-        Assert.That(auth.Authenticate("GunGreenEyes", "wrong"), Is.Null);
+        auth.SeedUser("gungreeneyes", "gungreeneyes", "Happygirl1005", UserRoles.Player, "#D85A30");
+        Assert.That(auth.Authenticate("gungreeneyes", "wrong"), Is.Null);
     }
 
     [Test]
@@ -67,8 +67,26 @@ public class AuthServiceTests
     [Test]
     public void Authenticate_is_case_insensitive_on_username()
     {
-        auth.SeedUser("GunGreenEyes", "GunGreenEyes", "Happygirl1005", UserRoles.Player, "#D85A30");
-        Assert.That(auth.Authenticate("gungreeneyes", "Happygirl1005"), Is.Not.Null);
+        // Seeded lowercase; sign in via mixed case → still resolves.
+        auth.SeedUser("gungreeneyes", "gungreeneyes", "Happygirl1005", UserRoles.Player, "#D85A30");
+        Assert.That(auth.Authenticate("GunGreenEyes", "Happygirl1005"), Is.Not.Null);
+    }
+
+    [Test]
+    public void SeedUser_normalises_existing_username_case()
+    {
+        // Pre-existing record from an earlier seed config has capitalised casing.
+        auth.SeedUser("OldCapitalised", "OldCapitalised", "Happygirl1005", UserRoles.Player, "#D85A30");
+        // Operator flips the seed config to lowercase. SeedUser finds the case-insensitive
+        // match and migrates Username + DisplayName to the new canonical form, leaving
+        // password and security stamp alone.
+        auth.SeedUser("oldcapitalised", "oldcapitalised", "Happygirl1005", UserRoles.Player, "#D85A30");
+        var record = repo.GetByUsername("oldcapitalised");
+        Assert.That(record, Is.Not.Null);
+        Assert.That(record!.Username, Is.EqualTo("oldcapitalised"));
+        Assert.That(record.DisplayName, Is.EqualTo("oldcapitalised"));
+        // Authenticate still works with the original password (no rehash).
+        Assert.That(auth.Authenticate("oldcapitalised", "Happygirl1005"), Is.Not.Null);
     }
 
     [Test]

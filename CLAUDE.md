@@ -44,8 +44,8 @@ egress on a single node — fine for the App Service tier we'd target.
   or lower the cap — otherwise blocks tunnel through it.
 - **Password policy is strict; seeded users bypass it.** `SeedUser` writes the
   BCrypt hash directly and is idempotent. `CreateUser` enforces ≥ 8 chars,
-  upper + lower + digit + special. The two seeded accounts (`GunGreenEyes`,
-  `GideonKain`) have weak passwords the operator chose verbatim.
+  upper + lower + digit + special. The two seeded accounts (`gungreeneyes`,
+  `gideonkain`) have weak passwords the operator chose verbatim.
 
 ## Build / test / run
 

@@ -68,7 +68,11 @@ public class AuthService
 
     /// <summary>
     /// Seed a user, bypassing the password policy. Used only for the two predetermined
-    /// seeded accounts whose passwords were given verbatim by the operator.
+    /// seeded accounts whose passwords were given verbatim by the operator. Idempotent:
+    /// if a user with this username (case-insensitive) already exists, we leave the
+    /// password / security stamp / role alone, but DO normalise the stored Username and
+    /// DisplayName to the seed strings — so flipping the seed config from "GunGreenEyes"
+    /// to "gungreeneyes" makes the canonical case in the store match on next cold start.
     /// </summary>
     public void SeedUser(string username, string displayName, string password, string role, string color)
     {
@@ -76,7 +80,20 @@ public class AuthService
         ValidateDisplayName(displayName);
         ValidateRole(role);
 
-        if (users.GetByUsername(username) != null) return;
+        var existing = users.GetByUsername(username);
+        if (existing != null)
+        {
+            // Case migration: only write if the canonical fields actually changed, so we
+            // don't churn the users.json file on every boot.
+            if (existing.Username != username || existing.DisplayName != displayName || existing.Color != color)
+            {
+                existing.Username = username;
+                existing.DisplayName = displayName;
+                existing.Color = color;
+                users.Update(existing);
+            }
+            return;
+        }
 
         var user = new UserAccount
         {
