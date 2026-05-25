@@ -3,6 +3,7 @@ using Cursory.Core.Services;
 
 namespace Cursory.Tests;
 
+[TestFixture]
 public class RoomStateTests
 {
     // Tests place objects around (CX, CY) — far from world bounds and from the seeded puzzles
@@ -14,7 +15,7 @@ public class RoomStateTests
     /// One cursor under the static-friction threshold can't move a heavy block,
     /// even with many tick iterations. Otherwise puzzle A would be trivially solvable solo.
     /// </summary>
-    [Fact]
+    [Test]
     public void Single_cursor_under_threshold_cannot_move_block()
     {
         var room = new RoomState();
@@ -28,13 +29,13 @@ public class RoomStateTests
         var startX = block.X;
         for (var i = 0; i < 60; i++) room.Step();
 
-        Assert.Equal(startX, block.X, precision: 6);
+        Assert.That(block.X, Is.EqualTo(startX).Within(1e-6));
     }
 
     /// <summary>
     /// Two cursors pulling the same direction stack their forces and break friction.
     /// </summary>
-    [Fact]
+    [Test]
     public void Two_cursors_pulling_together_move_block()
     {
         var room = new RoomState();
@@ -49,13 +50,13 @@ public class RoomStateTests
         room.GetCursor("u2")!.X = CX + 40;
 
         for (var i = 0; i < 60; i++) room.Step();
-        Assert.True(block.X > CX + 1, $"Expected block to move right but X={block.X}");
+        Assert.That(block.X, Is.GreaterThan(CX + 1), $"Expected block to move right but X={block.X}");
     }
 
     /// <summary>
     /// Two cursors pulling opposite directions cancel each other out. The block stays put.
     /// </summary>
-    [Fact]
+    [Test]
     public void Opposing_cursors_cancel_and_block_does_not_move()
     {
         var room = new RoomState();
@@ -69,7 +70,7 @@ public class RoomStateTests
         room.GetCursor("u2")!.X = CX - 200;
 
         for (var i = 0; i < 60; i++) room.Step();
-        Assert.Equal(CX, block.X, precision: 0);
+        Assert.That(block.X, Is.EqualTo(CX).Within(0.5));
     }
 
     /// <summary>
@@ -77,7 +78,7 @@ public class RoomStateTests
     /// This is the per-axis sliding behaviour: the block grazes along a wall instead of
     /// snagging.
     /// </summary>
-    [Fact]
+    [Test]
     public void Wall_stops_block_on_collision_axis_only()
     {
         var room = new RoomState();
@@ -97,11 +98,11 @@ public class RoomStateTests
 
         for (var i = 0; i < 240; i++) room.Step();
         // Block hit the wall — its right edge cannot pass the wall's left edge (x = CX + 270).
-        Assert.True(block.X <= CX + 270, $"Block crossed wall: X={block.X}");
-        Assert.True(block.Y > CY + 50, $"Block did not slide on y-axis: Y={block.Y}");
+        Assert.That(block.X, Is.LessThanOrEqualTo(CX + 270), $"Block crossed wall: X={block.X}");
+        Assert.That(block.Y, Is.GreaterThan(CY + 50), $"Block did not slide on y-axis: Y={block.Y}");
     }
 
-    [Fact]
+    [Test]
     public void Switch_activates_when_enough_cursors_inside()
     {
         var room = new RoomState();
@@ -109,11 +110,11 @@ public class RoomStateTests
         room.AddSwitch(sw);
         room.AddTestCursor("u1", CX, CY);
         room.Step();
-        Assert.True(sw.IsActive);
-        Assert.Equal(1, sw.CursorsInside);
+        Assert.That(sw.IsActive, Is.True);
+        Assert.That(sw.CursorsInside, Is.EqualTo(1));
     }
 
-    [Fact]
+    [Test]
     public void Switch_inactive_with_too_few_cursors()
     {
         var room = new RoomState();
@@ -121,11 +122,11 @@ public class RoomStateTests
         room.AddSwitch(sw);
         room.AddTestCursor("u1", CX, CY);
         room.Step();
-        Assert.False(sw.IsActive);
-        Assert.Equal(1, sw.CursorsInside);
+        Assert.That(sw.IsActive, Is.False);
+        Assert.That(sw.CursorsInside, Is.EqualTo(1));
     }
 
-    [Fact]
+    [Test]
     public void Door_opens_when_all_required_switches_active()
     {
         var room = new RoomState();
@@ -138,17 +139,17 @@ public class RoomStateTests
 
         room.AddTestCursor("u1", CX - 500, CY);
         room.Step();
-        Assert.False(door.IsOpen);
+        Assert.That(door.IsOpen, Is.False);
 
         room.AddTestCursor("u2", CX + 500, CY);
         room.Step();
-        Assert.True(door.IsOpen);
+        Assert.That(door.IsOpen, Is.True);
     }
 
     /// <summary>
     /// A closed door blocks a block; the same door, opened, lets the block pass.
     /// </summary>
-    [Fact]
+    [Test]
     public void Closed_door_blocks_passage_and_open_door_does_not()
     {
         var room = new RoomState();
@@ -165,19 +166,19 @@ public class RoomStateTests
 
         // Pull with closed door — block can't get past x = CX + 270 (door left edge - half block).
         for (var i = 0; i < 240; i++) room.Step();
-        Assert.True(block.X < CX + 270, $"Closed door did not stop block: X={block.X}");
+        Assert.That(block.X, Is.LessThan(CX + 270), $"Closed door did not stop block: X={block.X}");
 
         // Press the switch and pull longer — block should now make it through.
         room.AddTestCursor("u2", CX - 1000, CY);
         for (var i = 0; i < 480; i++) room.Step();
-        Assert.True(block.X > CX + 400, $"Open door did not let block through: X={block.X}");
+        Assert.That(block.X, Is.GreaterThan(CX + 400), $"Open door did not let block through: X={block.X}");
     }
 
     /// <summary>
     /// Puzzle D's single-switch / RequiredCount=2 mechanic: one cursor on the pad keeps
     /// the door closed; two cursors on the same pad open it.
     /// </summary>
-    [Fact]
+    [Test]
     public void Single_switch_requires_two_cursors_to_open_door()
     {
         var room = new RoomState();
@@ -188,47 +189,47 @@ public class RoomStateTests
 
         room.AddTestCursor("u1", CX, CY);
         room.Step();
-        Assert.False(door.IsOpen);
+        Assert.That(door.IsOpen, Is.False);
 
         room.AddTestCursor("u2", CX, CY);
         room.Step();
-        Assert.True(door.IsOpen);
+        Assert.That(door.IsOpen, Is.True);
     }
 
     /// <summary>
     /// Static geometry (labels + walls) lives in GeometryMessage, NOT in the tick-rate
     /// Snapshot — sending labels on every tick is wasted bandwidth at 100 cursors × 30 Hz.
     /// </summary>
-    [Fact]
+    [Test]
     public void GeometryMessage_includes_all_seeded_labels_and_walls()
     {
         var room = new RoomState();
         var geom = room.GeometryMessage();
-        Assert.Contains(geom.Labels, l => l.Id == "label-A");
-        Assert.Contains(geom.Labels, l => l.Id == "label-B");
-        Assert.Contains(geom.Labels, l => l.Id == "label-C");
-        Assert.Contains(geom.Labels, l => l.Id == "label-D");
-        Assert.NotEmpty(geom.Walls);
+        Assert.That(geom.Labels, Has.Some.Matches<WorldLabel>(l => l.Id == "label-A"));
+        Assert.That(geom.Labels, Has.Some.Matches<WorldLabel>(l => l.Id == "label-B"));
+        Assert.That(geom.Labels, Has.Some.Matches<WorldLabel>(l => l.Id == "label-C"));
+        Assert.That(geom.Labels, Has.Some.Matches<WorldLabel>(l => l.Id == "label-D"));
+        Assert.That(geom.Walls, Is.Not.Empty);
     }
 
     /// <summary>
     /// Belt-and-braces regression: NaN coordinates must not poison the simulation.
     /// </summary>
-    [Fact]
+    [Test]
     public void NaN_input_is_dropped()
     {
         var room = new RoomState();
         room.AddTestCursor("u1", CX, CY);
         var startX = room.GetCursor("u1")!.X;
         room.SetCursorPosition("u1", double.NaN, double.PositiveInfinity);
-        Assert.Equal(startX, room.GetCursor("u1")!.X);
+        Assert.That(room.GetCursor("u1")!.X, Is.EqualTo(startX));
     }
 
     /// <summary>
     /// Stale-cursor eviction: a cursor that hasn't sent input for the configured ticks
     /// is dropped on the next eviction sweep.
     /// </summary>
-    [Fact]
+    [Test]
     public void EvictStaleCursors_drops_silent_cursors()
     {
         var room = new RoomState();
@@ -236,15 +237,15 @@ public class RoomStateTests
         // Advance the tick counter past the staleness cutoff without any input from u1.
         for (var i = 0; i < 200; i++) room.Step();
         var dropped = room.EvictStaleCursors(150);
-        Assert.True(dropped >= 1);
-        Assert.Null(room.GetCursor("u1"));
+        Assert.That(dropped, Is.GreaterThanOrEqualTo(1));
+        Assert.That(room.GetCursor("u1"), Is.Null);
     }
 
     /// <summary>
     /// Puzzle E: a single cursor below the linear friction threshold can't move the L-shape.
     /// Mirrors the Single_cursor_under_threshold_cannot_move_block invariant.
     /// </summary>
-    [Fact]
+    [Test]
     public void Shape_single_cursor_under_threshold_cannot_move_shape()
     {
         var room = new RoomState();
@@ -262,8 +263,8 @@ public class RoomStateTests
 
         var startX = s.X; var startA = s.Angle;
         for (var i = 0; i < 60; i++) room.Step();
-        Assert.Equal(startX, s.X, precision: 3);
-        Assert.Equal(startA, s.Angle, precision: 3);
+        Assert.That(s.X, Is.EqualTo(startX).Within(0.001));
+        Assert.That(s.Angle, Is.EqualTo(startA).Within(0.001));
     }
 
     /// <summary>
@@ -271,7 +272,7 @@ public class RoomStateTests
     /// the L produce a strong torque, rotating the shape — the mechanic that lets a team
     /// rotate a body to fit through a gap.
     /// </summary>
-    [Fact]
+    [Test]
     public void Shape_offset_cursors_generate_torque_and_rotate()
     {
         var room = new RoomState();
@@ -293,13 +294,13 @@ public class RoomStateTests
 
         for (var i = 0; i < 240; i++) room.Step();
         // The shape rotated noticeably.
-        Assert.True(Math.Abs(s.Angle) > 0.1, $"Expected rotation, got Angle={s.Angle}");
+        Assert.That(Math.Abs(s.Angle), Is.GreaterThan(0.1), $"Expected rotation, got Angle={s.Angle}");
     }
 
     /// <summary>
     /// A wall blocks linear shape motion until the body is rotated to fit through a gap.
     /// </summary>
-    [Fact]
+    [Test]
     public void Shape_cannot_translate_through_solid_wall()
     {
         var room = new RoomState();
@@ -321,10 +322,10 @@ public class RoomStateTests
         for (var i = 0; i < 240; i++) room.Step();
         // Wall left edge at CX+370. Piece right extent in body frame: localX+halfW = 200.
         // Body centre can sit at most at wall_left - piece_extent = CX+370 - 200 = CX+170.
-        Assert.True(s.X <= CX + 170 + 5, $"Shape phased through wall: X={s.X}");
+        Assert.That(s.X, Is.LessThanOrEqualTo(CX + 175), $"Shape phased through wall: X={s.X}");
     }
 
-    [Fact]
+    [Test]
     public void Detach_removes_cursor_force_from_block()
     {
         var room = new RoomState();
@@ -338,6 +339,6 @@ public class RoomStateTests
         var afterDetachX = block.X;
 
         for (var i = 0; i < 60; i++) room.Step();
-        Assert.True(block.X - afterDetachX < 5, $"Detached cursor still moved block: delta={block.X - afterDetachX}");
+        Assert.That(block.X - afterDetachX, Is.LessThan(5), $"Detached cursor still moved block: delta={block.X - afterDetachX}");
     }
 }
