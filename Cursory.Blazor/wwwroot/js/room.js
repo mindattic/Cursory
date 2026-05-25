@@ -164,6 +164,7 @@ function render(now) {
     ctx.translate(-state.cam.x, -state.cam.y);
 
     drawGrid();
+    drawLabels();
     drawGoals();
     drawSwitches();
     drawWalls();
@@ -190,6 +191,19 @@ function drawGrid() {
     ctx.strokeStyle = 'rgba(255,255,255,0.2)';
     ctx.lineWidth = 4;
     ctx.strokeRect(0, 0, W, H);
+}
+
+function drawLabels() {
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    for (const l of state.snapshot.labels || []) {
+        ctx.fillStyle = 'rgba(255,255,255,0.85)';
+        ctx.font = '600 36px system-ui';
+        ctx.fillText(l.title, l.x, l.y);
+        ctx.fillStyle = 'rgba(255,255,255,0.45)';
+        ctx.font = '18px system-ui';
+        ctx.fillText(l.subtitle, l.x, l.y + 42);
+    }
 }
 
 function drawGoals() {

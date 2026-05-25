@@ -16,6 +16,7 @@ public class RoomState
     private readonly ConcurrentDictionary<string, Wall> walls = new();
     private readonly ConcurrentDictionary<string, SwitchTile> switches = new();
     private readonly ConcurrentDictionary<string, Door> doors = new();
+    private readonly ConcurrentDictionary<string, WorldLabel> labels = new();
     private readonly ConcurrentQueue<Whistle> whistles = new();
     private const int WhistleRingCapacity = 256;
 
@@ -106,6 +107,8 @@ public class RoomState
     public void AddDoor(Door d) => doors[d.Id] = d;
     /// <summary>Test/seed helper: directly add a goal zone.</summary>
     public void AddGoal(GoalZone g) => goals[g.Id] = g;
+    /// <summary>Test/seed helper: directly add a world label.</summary>
+    public void AddLabel(WorldLabel l) => labels[l.Id] = l;
     /// <summary>Test helper: register a cursor with explicit position.</summary>
     public void AddTestCursor(string userId, double x, double y, string color = "#7F77DD")
     {
@@ -131,6 +134,7 @@ public class RoomState
             Walls = walls.Values.Select(CloneWall).ToList(),
             Switches = switches.Values.Select(CloneSwitch).ToList(),
             Doors = doors.Values.Select(CloneDoor).ToList(),
+            Labels = labels.Values.Select(CloneLabel).ToList(),
             Whistles = whistles.Where(w => tick - w.Tick < 30).Select(CloneWhistle).ToList(),
         };
     }
@@ -162,6 +166,10 @@ public class RoomState
         Id = d.Id, X = d.X, Y = d.Y, W = d.W, H = d.H,
         RequiredSwitchIds = [..d.RequiredSwitchIds], IsOpen = d.IsOpen,
     };
+    private static WorldLabel CloneLabel(WorldLabel l) => new()
+    {
+        Id = l.Id, X = l.X, Y = l.Y, Title = l.Title, Subtitle = l.Subtitle,
+    };
     private static Whistle CloneWhistle(Whistle w) => new()
     {
         UserId = w.UserId, Color = w.Color, X = w.X, Y = w.Y, Tick = w.Tick,
@@ -174,6 +182,7 @@ public class RoomState
         SeedPuzzleA();
         SeedPuzzleB();
         SeedPuzzleC();
+        SeedPuzzleD();
     }
 
     /// <summary>
@@ -193,6 +202,12 @@ public class RoomState
         goals[goalId] = new GoalZone
         {
             Id = goalId, X = 3400, Y = 5000, W = 320, H = 320, TargetBlockId = blockId,
+        };
+        labels["label-A"] = new WorldLabel
+        {
+            Id = "label-A", X = 2700, Y = 4500,
+            Title = "A — Heave-ho",
+            Subtitle = "One block, two cursors needed.",
         };
     }
 
@@ -237,6 +252,12 @@ public class RoomState
         {
             Id = "goal-B", X = 6200, Y = 5000, W = 280, H = 280, TargetBlockId = blockId,
         };
+        labels["label-B"] = new WorldLabel
+        {
+            Id = "label-B", X = 5300, Y = 4200,
+            Title = "B — Hold the gate",
+            Subtitle = "Two pads. Open the door. Push the block through.",
+        };
     }
 
     /// <summary>
@@ -265,6 +286,52 @@ public class RoomState
         goals["goal-C"] = new GoalZone
         {
             Id = "goal-C", X = 7900, Y = 6200, W = 240, H = 240, TargetBlockId = blockId,
+        };
+        labels["label-C"] = new WorldLabel
+        {
+            Id = "label-C", X = 7600, Y = 3200,
+            Title = "C — The slot",
+            Subtitle = "Drag the block down through the corridor.",
+        };
+    }
+
+    /// <summary>
+    /// Puzzle D — "Stand together": a single pressure pad that needs two cursors on it
+    /// simultaneously to open the door. Teaches the "RequiredCount > 1" pattern with the
+    /// minimum surface area, distinct from puzzle B (which uses two separate switches).
+    /// </summary>
+    private void SeedPuzzleD()
+    {
+        const string switchId = "switch-D";
+        switches[switchId] = new SwitchTile
+        {
+            Id = switchId, X = 3600, Y = 7800, W = 280, H = 280,
+            RequiredCount = 2, Color = "#BA7517",
+        };
+        // Walls that frame the corridor so the block can't simply be dragged around the door.
+        walls["wall-D-top"] = new Wall { Id = "wall-D-top", X = 4500, Y = 7400, W = 1600, H = 60 };
+        walls["wall-D-bot"] = new Wall { Id = "wall-D-bot", X = 4500, Y = 8200, W = 1600, H = 60 };
+        walls["wall-D-back"] = new Wall { Id = "wall-D-back", X = 5300, Y = 7800, W = 60, H = 800 };
+        doors["door-D"] = new Door
+        {
+            Id = "door-D", X = 4500, Y = 7800, W = 60, H = 800,
+            RequiredSwitchIds = [switchId],
+        };
+        const string blockId = "block-D";
+        blocks[blockId] = new BlockState
+        {
+            Id = blockId, X = 4100, Y = 7800, W = 140, H = 140,
+            Mass = 3, StaticFriction = 0.4, Color = "#D4537E",
+        };
+        goals["goal-D"] = new GoalZone
+        {
+            Id = "goal-D", X = 5000, Y = 7800, W = 240, H = 240, TargetBlockId = blockId,
+        };
+        labels["label-D"] = new WorldLabel
+        {
+            Id = "label-D", X = 4200, Y = 7100,
+            Title = "D — Stand together",
+            Subtitle = "Two cursors on the same pad. One drags the block through.",
         };
     }
 

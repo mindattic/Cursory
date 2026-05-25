@@ -173,6 +173,42 @@ public class RoomStateTests
         Assert.True(block.X > CX + 400, $"Open door did not let block through: X={block.X}");
     }
 
+    /// <summary>
+    /// Puzzle D's single-switch / RequiredCount=2 mechanic: one cursor on the pad keeps
+    /// the door closed; two cursors on the same pad open it.
+    /// </summary>
+    [Fact]
+    public void Single_switch_requires_two_cursors_to_open_door()
+    {
+        var room = new RoomState();
+        var sw = new SwitchTile { Id = "s", X = CX, Y = CY, W = 200, H = 200, RequiredCount = 2 };
+        room.AddSwitch(sw);
+        var door = new Door { Id = "d", X = CX + 400, Y = CY, W = 60, H = 400, RequiredSwitchIds = ["s"] };
+        room.AddDoor(door);
+
+        room.AddTestCursor("u1", CX, CY);
+        room.Step();
+        Assert.False(door.IsOpen);
+
+        room.AddTestCursor("u2", CX, CY);
+        room.Step();
+        Assert.True(door.IsOpen);
+    }
+
+    /// <summary>
+    /// Snapshot includes the seeded puzzle labels so the client can render signposts.
+    /// </summary>
+    [Fact]
+    public void Snapshot_includes_seeded_puzzle_labels()
+    {
+        var room = new RoomState();
+        var snap = room.Snapshot();
+        Assert.Contains(snap.Labels, l => l.Id == "label-A");
+        Assert.Contains(snap.Labels, l => l.Id == "label-B");
+        Assert.Contains(snap.Labels, l => l.Id == "label-C");
+        Assert.Contains(snap.Labels, l => l.Id == "label-D");
+    }
+
     [Fact]
     public void Detach_removes_cursor_force_from_block()
     {

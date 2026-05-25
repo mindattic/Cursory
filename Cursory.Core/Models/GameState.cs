@@ -121,6 +121,19 @@ public class Door
 }
 
 /// <summary>
+/// A static labelled marker drawn in the world — used to title each puzzle area so a
+/// fresh player can navigate the 10 000 × 10 000 world by signposts instead of memory.
+/// </summary>
+public class WorldLabel
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public double X { get; set; }
+    public double Y { get; set; }
+    public string Title { get; set; } = "";
+    public string Subtitle { get; set; } = "";
+}
+
+/// <summary>
 /// Authoritative world snapshot broadcast to every connected client at the tick rate.
 /// Keep this lean — at 100 players × 30 ticks/sec this travels a lot.
 /// </summary>
@@ -133,6 +146,7 @@ public class WorldSnapshot
     public List<Wall> Walls { get; set; } = [];
     public List<SwitchTile> Switches { get; set; } = [];
     public List<Door> Doors { get; set; } = [];
+    public List<WorldLabel> Labels { get; set; } = [];
     public List<Whistle> Whistles { get; set; } = [];
 }
 
