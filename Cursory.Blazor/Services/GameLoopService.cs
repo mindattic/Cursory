@@ -14,6 +14,12 @@ public class GameLoopService : BackgroundService
 {
     private const int TicksPerSecond = 30;
     private static readonly TimeSpan TickInterval = TimeSpan.FromMilliseconds(1000.0 / TicksPerSecond);
+    /// <summary>Threshold above which a tick logs a slow-tick warning. ~80% of the budget.</summary>
+    private static readonly TimeSpan SlowTickThreshold = TimeSpan.FromMilliseconds(26);
+    /// <summary>Drop cursors that haven't sent input in this many ticks (~5 s at 30 Hz).</summary>
+    private const int StaleCursorTicks = 150;
+    /// <summary>Run the stale-cursor eviction every N ticks (1 s).</summary>
+    private const int EvictionEveryNTicks = 30;
 
     private readonly RoomState room;
     private readonly IHubContext<RoomHub> hub;
@@ -30,22 +36,37 @@ public class GameLoopService : BackgroundService
     {
         log.LogInformation("Cursory game loop starting at {Tps} Hz", TicksPerSecond);
         using var timer = new PeriodicTimer(TickInterval);
+        var slowTickLastLogged = DateTime.MinValue;
         try
         {
             while (await timer.WaitForNextTickAsync(stoppingToken))
             {
                 try
                 {
+                    var swStart = System.Diagnostics.Stopwatch.GetTimestamp();
                     room.Step();
+                    if (room.CurrentTick % EvictionEveryNTicks == 0)
+                    {
+                        var dropped = room.EvictStaleCursors(StaleCursorTicks);
+                        if (dropped > 0) log.LogInformation("Evicted {N} stale cursor(s)", dropped);
+                    }
                     var snap = room.Snapshot();
-                    // SendAsync is fire-and-forget to the underlying transports; awaiting
-                    // here serializes one snapshot send per tick which is the right backpressure.
                     await hub.Clients.All.SendAsync("Snapshot", snap, stoppingToken);
+
+                    // Slow-tick canary: alert operators when a tick crowds the 33 ms budget.
+                    // Throttled to once per 5 s so a sustained slow-tick run doesn't drown the log.
+                    var elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(swStart);
+                    if (elapsed > SlowTickThreshold && (DateTime.UtcNow - slowTickLastLogged) > TimeSpan.FromSeconds(5))
+                    {
+                        slowTickLastLogged = DateTime.UtcNow;
+                        log.LogWarning(
+                            "Slow tick: {Ms} ms (budget {BudgetMs} ms), cursors={Cursors}",
+                            elapsed.TotalMilliseconds, TickInterval.TotalMilliseconds, room.AllCursors.Count);
+                    }
                 }
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex)
                 {
-                    // A tick should never tear down the loop. Log and keep ticking.
                     log.LogError(ex, "Game loop tick failed");
                 }
             }

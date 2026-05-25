@@ -10,6 +10,7 @@
     <div class="room-hud">
         <span class="room-hud-name">@DisplayName</span>
         <span class="room-hud-dot" style="background:@Color"></span>
+        <span id="room-status" class="room-status room-status-connecting" title="Connection status">Connecting…</span>
         <span class="room-hud-hint">Drag empty space to pan · click a block to attach a cursor · click to whistle</span>
         <form method="post" action="/api/auth/logout" class="room-hud-logout">
             <AntiforgeryToken />

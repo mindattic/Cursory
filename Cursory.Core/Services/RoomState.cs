@@ -42,8 +42,11 @@ public class RoomState
                 ConnectionId = connectionId,
                 DisplayName = displayName,
                 Color = color,
-                X = 1500,
-                Y = WorldGeometry.Height / 2,
+                // Deterministic spawn scatter near the warm-up puzzle. Without this, two
+                // players joining at the same moment land on the same pixel and the user
+                // can't tell their cursor apart from the other player's.
+                X = 1500 + (StableHash(userId) % 800) - 400,
+                Y = (WorldGeometry.Height / 2) + ((StableHash(userId) / 1000) % 600) - 300,
                 LastInputTick = CurrentTick,
             },
             (_, existing) =>
@@ -56,11 +59,26 @@ public class RoomState
             });
     }
 
+    /// <summary>
+    /// Deterministic 31-bit hash of a string. Used for spawn-position scatter so the
+    /// same user always lands in the same neighbourhood. Don't use for security.
+    /// </summary>
+    private static int StableHash(string s)
+    {
+        unchecked
+        {
+            var h = 5381;
+            foreach (var ch in s) h = (h * 33) ^ ch;
+            return h & 0x7FFFFFFF;
+        }
+    }
+
     public void RemovePlayer(string userId) => cursors.TryRemove(userId, out _);
 
     public void SetCursorPosition(string userId, double x, double y)
     {
         if (!cursors.TryGetValue(userId, out var c)) return;
+        if (!IsFinite(x) || !IsFinite(y)) return;
         c.X = Math.Clamp(x, 0, WorldGeometry.Width);
         c.Y = Math.Clamp(y, 0, WorldGeometry.Height);
         c.LastInputTick = CurrentTick;
@@ -70,11 +88,18 @@ public class RoomState
     {
         if (!cursors.TryGetValue(userId, out var c)) return false;
         if (!blocks.TryGetValue(blockId, out var b)) return false;
+        if (!IsFinite(clickX) || !IsFinite(clickY)) return false;
+        // The anchor lives in block-local space — clamp the click to the block's AABB so a
+        // hostile client can't claim an anchor 10 000 units off the body and then yank.
+        var localX = Math.Clamp(clickX - b.X, -b.W / 2, b.W / 2);
+        var localY = Math.Clamp(clickY - b.Y, -b.H / 2, b.H / 2);
         c.AttachedBlockId = b.Id;
-        c.AnchorLocalX = clickX - b.X;
-        c.AnchorLocalY = clickY - b.Y;
+        c.AnchorLocalX = localX;
+        c.AnchorLocalY = localY;
         return true;
     }
+
+    private static bool IsFinite(double v) => !double.IsNaN(v) && !double.IsInfinity(v);
 
     public void Detach(string userId)
     {
@@ -84,12 +109,38 @@ public class RoomState
     public void RecordWhistle(string userId, double x, double y)
     {
         if (!cursors.TryGetValue(userId, out var c)) return;
-        whistles.Enqueue(new Whistle { UserId = userId, Color = c.Color, X = x, Y = y, Tick = CurrentTick });
+        if (!IsFinite(x) || !IsFinite(y)) return;
+        var cx = Math.Clamp(x, 0, WorldGeometry.Width);
+        var cy = Math.Clamp(y, 0, WorldGeometry.Height);
+        whistles.Enqueue(new Whistle { UserId = userId, Color = c.Color, X = cx, Y = cy, Tick = CurrentTick });
         while (whistles.Count > WhistleRingCapacity && whistles.TryDequeue(out _)) { }
     }
 
     public CursorState? GetCursor(string userId) =>
         cursors.TryGetValue(userId, out var c) ? c : null;
+
+    /// <summary>
+    /// Drop cursors that haven't sent input for <paramref name="staleAfterTicks"/> ticks.
+    /// Hub OnDisconnectedAsync handles graceful disconnects, but silent network drops
+    /// (laptop lid closed, WiFi loss) leave the connection dangling on the server side
+    /// for SignalR's keep-alive timeout (~30 s default). This is a faster ghost cleanup —
+    /// called from the game loop, runs every tick at O(cursors). At 150 ticks (~5 s) we
+    /// drop a stale cursor; SignalR's own cleanup still runs and is harmless if the
+    /// cursor is already gone.
+    /// </summary>
+    public int EvictStaleCursors(long staleAfterTicks)
+    {
+        var cutoff = CurrentTick - staleAfterTicks;
+        var evicted = 0;
+        foreach (var c in cursors.Values)
+        {
+            if (c.LastInputTick < cutoff)
+            {
+                if (cursors.TryRemove(c.UserId, out _)) evicted++;
+            }
+        }
+        return evicted;
+    }
 
     public IReadOnlyCollection<CursorState> AllCursors => cursors.Values.ToList();
     public IReadOnlyCollection<BlockState> AllBlocks => blocks.Values.ToList();
@@ -98,19 +149,19 @@ public class RoomState
     public IReadOnlyCollection<Door> AllDoors => doors.Values.ToList();
 
     /// <summary>Test/seed helper: directly add a wall to the world.</summary>
-    public void AddWall(Wall w) => walls[w.Id] = w;
+    internal void AddWall(Wall w) => walls[w.Id] = w;
     /// <summary>Test/seed helper: directly add a block.</summary>
-    public void AddBlock(BlockState b) => blocks[b.Id] = b;
+    internal void AddBlock(BlockState b) => blocks[b.Id] = b;
     /// <summary>Test/seed helper: directly add a switch.</summary>
-    public void AddSwitch(SwitchTile s) => switches[s.Id] = s;
+    internal void AddSwitch(SwitchTile s) => switches[s.Id] = s;
     /// <summary>Test/seed helper: directly add a door.</summary>
-    public void AddDoor(Door d) => doors[d.Id] = d;
+    internal void AddDoor(Door d) => doors[d.Id] = d;
     /// <summary>Test/seed helper: directly add a goal zone.</summary>
-    public void AddGoal(GoalZone g) => goals[g.Id] = g;
+    internal void AddGoal(GoalZone g) => goals[g.Id] = g;
     /// <summary>Test/seed helper: directly add a world label.</summary>
-    public void AddLabel(WorldLabel l) => labels[l.Id] = l;
+    internal void AddLabel(WorldLabel l) => labels[l.Id] = l;
     /// <summary>Test helper: register a cursor with explicit position.</summary>
-    public void AddTestCursor(string userId, double x, double y, string color = "#7F77DD")
+    internal void AddTestCursor(string userId, double x, double y, string color = "#7F77DD")
     {
         cursors[userId] = new CursorState
         {
@@ -131,13 +182,23 @@ public class RoomState
             Cursors = cursors.Values.Select(CloneCursor).ToList(),
             Blocks = blocks.Values.Select(CloneBlock).ToList(),
             Goals = goals.Values.Select(CloneGoal).ToList(),
-            Walls = walls.Values.Select(CloneWall).ToList(),
             Switches = switches.Values.Select(CloneSwitch).ToList(),
             Doors = doors.Values.Select(CloneDoor).ToList(),
-            Labels = labels.Values.Select(CloneLabel).ToList(),
             Whistles = whistles.Where(w => tick - w.Tick < 30).Select(CloneWhistle).ToList(),
         };
     }
+
+    /// <summary>
+    /// Static-geometry snapshot delivered once per connection. Walls + labels don't change
+    /// at runtime, so they ride this one-shot message instead of the 30 Hz Snapshot stream.
+    /// </summary>
+    public WorldGeometryMessage GeometryMessage() => new()
+    {
+        WorldWidth = WorldGeometry.Width,
+        WorldHeight = WorldGeometry.Height,
+        Walls = walls.Values.Select(CloneWall).ToList(),
+        Labels = labels.Values.Select(CloneLabel).ToList(),
+    };
 
     private static CursorState CloneCursor(CursorState c) => new()
     {

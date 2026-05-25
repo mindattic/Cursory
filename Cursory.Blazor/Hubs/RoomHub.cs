@@ -20,15 +20,18 @@ public class RoomHub : Hub
         this.room = room;
     }
 
-    public override Task OnConnectedAsync()
+    public override async Task OnConnectedAsync()
     {
         var user = Context.User!;
         var userId = user.FindFirst("UserId")?.Value;
-        if (string.IsNullOrEmpty(userId)) { Context.Abort(); return Task.CompletedTask; }
+        if (string.IsNullOrEmpty(userId)) { Context.Abort(); return; }
         var name = user.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value ?? "Anon";
         var color = user.FindFirst("Color")?.Value ?? "#7F77DD";
         room.AddOrUpdatePlayer(userId, Context.ConnectionId, name, color);
-        return base.OnConnectedAsync();
+        // One-shot static geometry — walls + labels — to this caller only. The 30 Hz
+        // Snapshot stream carries only state that actually changes.
+        await Clients.Caller.SendAsync("Geometry", room.GeometryMessage());
+        await base.OnConnectedAsync();
     }
 
     public override Task OnDisconnectedAsync(Exception? exception)

@@ -134,8 +134,22 @@ public class WorldLabel
 }
 
 /// <summary>
+/// Static world geometry sent ONCE per connection (when the client subscribes) instead
+/// of on every tick. Walls + Labels never change at runtime, so re-sending them at 30 Hz
+/// is wasted bandwidth — at 100 cursors × 30 ticks/sec the savings are non-trivial.
+/// </summary>
+public class WorldGeometryMessage
+{
+    public double WorldWidth { get; set; }
+    public double WorldHeight { get; set; }
+    public List<Wall> Walls { get; set; } = [];
+    public List<WorldLabel> Labels { get; set; } = [];
+}
+
+/// <summary>
 /// Authoritative world snapshot broadcast to every connected client at the tick rate.
-/// Keep this lean — at 100 players × 30 ticks/sec this travels a lot.
+/// Carries only state that actually changes from tick to tick. Static geometry (walls,
+/// labels) is delivered once via <see cref="WorldGeometryMessage"/>.
 /// </summary>
 public class WorldSnapshot
 {
@@ -143,10 +157,8 @@ public class WorldSnapshot
     public List<CursorState> Cursors { get; set; } = [];
     public List<BlockState> Blocks { get; set; } = [];
     public List<GoalZone> Goals { get; set; } = [];
-    public List<Wall> Walls { get; set; } = [];
     public List<SwitchTile> Switches { get; set; } = [];
     public List<Door> Doors { get; set; } = [];
-    public List<WorldLabel> Labels { get; set; } = [];
     public List<Whistle> Whistles { get; set; } = [];
 }
 

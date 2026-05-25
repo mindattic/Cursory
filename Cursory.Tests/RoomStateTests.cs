@@ -196,17 +196,48 @@ public class RoomStateTests
     }
 
     /// <summary>
-    /// Snapshot includes the seeded puzzle labels so the client can render signposts.
+    /// Static geometry (labels + walls) lives in GeometryMessage, NOT in the tick-rate
+    /// Snapshot — sending labels on every tick is wasted bandwidth at 100 cursors × 30 Hz.
     /// </summary>
     [Fact]
-    public void Snapshot_includes_seeded_puzzle_labels()
+    public void GeometryMessage_includes_all_seeded_labels_and_walls()
     {
         var room = new RoomState();
-        var snap = room.Snapshot();
-        Assert.Contains(snap.Labels, l => l.Id == "label-A");
-        Assert.Contains(snap.Labels, l => l.Id == "label-B");
-        Assert.Contains(snap.Labels, l => l.Id == "label-C");
-        Assert.Contains(snap.Labels, l => l.Id == "label-D");
+        var geom = room.GeometryMessage();
+        Assert.Contains(geom.Labels, l => l.Id == "label-A");
+        Assert.Contains(geom.Labels, l => l.Id == "label-B");
+        Assert.Contains(geom.Labels, l => l.Id == "label-C");
+        Assert.Contains(geom.Labels, l => l.Id == "label-D");
+        Assert.NotEmpty(geom.Walls);
+    }
+
+    /// <summary>
+    /// Belt-and-braces regression: NaN coordinates must not poison the simulation.
+    /// </summary>
+    [Fact]
+    public void NaN_input_is_dropped()
+    {
+        var room = new RoomState();
+        room.AddTestCursor("u1", CX, CY);
+        var startX = room.GetCursor("u1")!.X;
+        room.SetCursorPosition("u1", double.NaN, double.PositiveInfinity);
+        Assert.Equal(startX, room.GetCursor("u1")!.X);
+    }
+
+    /// <summary>
+    /// Stale-cursor eviction: a cursor that hasn't sent input for the configured ticks
+    /// is dropped on the next eviction sweep.
+    /// </summary>
+    [Fact]
+    public void EvictStaleCursors_drops_silent_cursors()
+    {
+        var room = new RoomState();
+        room.AddTestCursor("u1", CX, CY);
+        // Advance the tick counter past the staleness cutoff without any input from u1.
+        for (var i = 0; i < 200; i++) room.Step();
+        var dropped = room.EvictStaleCursors(150);
+        Assert.True(dropped >= 1);
+        Assert.Null(room.GetCursor("u1"));
     }
 
     [Fact]

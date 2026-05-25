@@ -121,6 +121,12 @@ public class UserRepository
         var dir = Path.GetDirectoryName(filePath);
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
         var json = JsonSerializer.Serialize(cache, new JsonSerializerOptions { WriteIndented = true });
-        File.WriteAllText(filePath, json);
+        // Atomic write: serialise to a temp sibling file, fsync, then replace the target.
+        // A crash or power loss between WriteAllText and File.Move leaves users.json intact
+        // (still pointing at the previous good copy); the worst-case outcome is a stray
+        // .tmp left on disk. File.Move(overwrite:true) is atomic on Windows and POSIX.
+        var tempPath = filePath + ".tmp";
+        File.WriteAllText(tempPath, json);
+        File.Move(tempPath, filePath, overwrite: true);
     }
 }

@@ -24,10 +24,14 @@ const state = {
     cam: { x: 5000, y: 5000, z: 1 },
     pan: { active: false, sx: 0, sy: 0, ox: 0, oy: 0 },
     mouseWorld: { x: 5000, y: 5000 },
-    snapshot: { tick: 0, cursors: [], blocks: [], goals: [], whistles: [] },
+    // Static geometry — populated once via the "Geometry" message on hub connect.
+    geometry: { walls: [], labels: [] },
+    // Per-tick dynamic snapshot.
+    snapshot: { tick: 0, cursors: [], blocks: [], goals: [], switches: [], doors: [], whistles: [] },
     attachedBlockId: null,
     lastSent: 0,
     whistleAnims: [], // {x, y, color, t0}
+    connection: { status: 'connecting' }, // 'connecting' | 'connected' | 'reconnecting' | 'disconnected'
 };
 
 export async function start(opts) {
@@ -54,6 +58,15 @@ export async function start(opts) {
         }
     };
 
+    // Click-vs-drag disambiguation: mousedown on empty space ARMS a pending whistle and
+    // a pending pan. The first ≤5 px of movement is absorbed (still a click); past that
+    // threshold we commit to a pan and cancel the whistle. On mouseup, if we never
+    // crossed the threshold AND it happened within 250 ms, fire the whistle. This is
+    // the same pattern Figma/Miro use: clicks shouldn't drag, drags shouldn't whistle.
+    const DRAG_THRESHOLD_PX = 5;
+    const CLICK_MAX_MS = 250;
+    let armed = null;  // { startX, startY, startT, worldX, worldY } | null
+
     const onMouseDown = (e) => {
         ensureAudio();
         const world = clientToWorld(e.clientX, e.clientY);
@@ -62,19 +75,27 @@ export async function start(opts) {
         if (hit && connection) {
             state.attachedBlockId = hit.id;
             connection.invoke('Grab', hit.id, world.x, world.y).catch(noop);
-        } else {
-            // Click in empty space = whistle.
-            playWhistle(state.me.color);
-            state.whistleAnims.push({ x: world.x, y: world.y, color: state.me.color, t0: performance.now() });
-            if (connection) connection.invoke('Whistle', world.x, world.y).catch(noop);
-            // Begin pan
-            state.pan.active = true;
-            state.pan.sx = e.clientX; state.pan.sy = e.clientY;
-            state.pan.ox = state.cam.x; state.pan.oy = state.cam.y;
-            viewport.classList.add('dragging');
+            return;
         }
+        // Empty-space mousedown — arm a pending whistle+pan; commit on movement or mouseup.
+        armed = {
+            startX: e.clientX, startY: e.clientY, startT: performance.now(),
+            worldX: world.x, worldY: world.y,
+        };
+        state.pan.sx = e.clientX; state.pan.sy = e.clientY;
+        state.pan.ox = state.cam.x; state.pan.oy = state.cam.y;
     };
     const onMouseMove = (e) => {
+        if (armed && !state.pan.active) {
+            const dx = e.clientX - armed.startX;
+            const dy = e.clientY - armed.startY;
+            if (dx * dx + dy * dy >= DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX) {
+                // Crossed the drag threshold — commit to pan; the click is no longer a whistle.
+                state.pan.active = true;
+                armed = null;
+                viewport.classList.add('dragging');
+            }
+        }
         if (state.pan.active) {
             const dx = (e.clientX - state.pan.sx) / state.cam.z;
             const dy = (e.clientY - state.pan.sy) / state.cam.z;
@@ -88,7 +109,16 @@ export async function start(opts) {
         if (state.pan.active) {
             state.pan.active = false;
             viewport.classList.remove('dragging');
+        } else if (armed) {
+            // Released without crossing the drag threshold — fire the whistle if still snappy.
+            const dt = performance.now() - armed.startT;
+            if (dt <= CLICK_MAX_MS) {
+                playWhistle(state.me.color);
+                state.whistleAnims.push({ x: armed.worldX, y: armed.worldY, color: state.me.color, t0: performance.now() });
+                if (connection) connection.invoke('Whistle', armed.worldX, armed.worldY).catch(noop);
+            }
         }
+        armed = null;
         if (state.attachedBlockId && connection) {
             state.attachedBlockId = null;
             connection.invoke('Release').catch(noop);
@@ -111,6 +141,15 @@ export async function start(opts) {
         .withUrl('/hubs/room')
         .withAutomaticReconnect()
         .build();
+    connection.onreconnecting(() => { state.connection.status = 'reconnecting'; renderStatus(); });
+    connection.onreconnected(()  => { state.connection.status = 'connected';    renderStatus(); });
+    connection.onclose(()        => { state.connection.status = 'disconnected'; renderStatus(); });
+    connection.on('Geometry', (msg) => {
+        state.geometry.walls = msg.walls || [];
+        state.geometry.labels = msg.labels || [];
+        if (msg.worldWidth)  state.world.width  = msg.worldWidth;
+        if (msg.worldHeight) state.world.height = msg.worldHeight;
+    });
     connection.on('Snapshot', (snap) => {
         state.snapshot = snap;
         // Drive a local whistle anim for any whistles we didn't fire ourselves (others' clicks).
@@ -125,8 +164,15 @@ export async function start(opts) {
             }
         }
     });
-    try { await connection.start(); }
-    catch (e) { console.error('[cursory] hub connect failed', e); }
+    try {
+        await connection.start();
+        state.connection.status = 'connected';
+        renderStatus();
+    } catch (e) {
+        console.error('[cursory] hub connect failed', e);
+        state.connection.status = 'disconnected';
+        renderStatus();
+    }
 
     raf = requestAnimationFrame(loop);
 }
@@ -196,7 +242,7 @@ function drawGrid() {
 function drawLabels() {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
-    for (const l of state.snapshot.labels || []) {
+    for (const l of state.geometry.labels) {
         ctx.fillStyle = 'rgba(255,255,255,0.85)';
         ctx.font = '600 36px system-ui';
         ctx.fillText(l.title, l.x, l.y);
@@ -231,7 +277,7 @@ function drawBlocks() {
 }
 
 function drawWalls() {
-    for (const w of state.snapshot.walls || []) {
+    for (const w of state.geometry.walls) {
         ctx.fillStyle = '#2a2a2a';
         ctx.strokeStyle = 'rgba(255,255,255,0.18)';
         ctx.lineWidth = 2;
@@ -307,14 +353,20 @@ function drawAttachLines() {
 }
 
 function drawCursors() {
+    // Build the block-by-id lookup once per frame. The previous implementation did
+    // (snapshot.blocks || []).find(b => b.id === c.attachedBlockId) inside the per-cursor
+    // loop — O(N×M) at scale. With 100 cursors all attached to one of 4 blocks that's a
+    // 400-comparison pass every frame; Map.get is O(1).
+    const blockById = new Map();
+    for (const b of state.snapshot.blocks || []) blockById.set(b.id, b);
     for (const c of state.snapshot.cursors || []) {
         const isMe = c.userId === state.me.userId;
         // Rotation: if attached, point inward at anchor; otherwise point up.
         let rot = 0;
         if (c.attachedBlockId) {
-            const blockById = (state.snapshot.blocks || []).find(b => b.id === c.attachedBlockId);
-            if (blockById) {
-                const ax = blockById.x + c.anchorLocalX, ay = blockById.y + c.anchorLocalY;
+            const b = blockById.get(c.attachedBlockId);
+            if (b) {
+                const ax = b.x + c.anchorLocalX, ay = b.y + c.anchorLocalY;
                 rot = Math.atan2(ay - c.y, ax - c.x);
             }
         }
@@ -433,6 +485,17 @@ function playWhistle(color) {
         osc.start(now);
         osc.stop(now + 0.45);
     } catch (e) { /* audio failure should never break the room */ }
+}
+
+function renderStatus() {
+    const el = document.getElementById('room-status');
+    if (!el) return;
+    const s = state.connection.status;
+    el.className = 'room-status room-status-' + s;
+    el.textContent = s === 'connected' ? 'Live'
+        : s === 'reconnecting' ? 'Reconnecting…'
+        : s === 'disconnected' ? 'Offline'
+        : 'Connecting…';
 }
 
 function hashStr(s) { let h = 0; for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0; return Math.abs(h); }
