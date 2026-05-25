@@ -1,0 +1,23 @@
+## Build output
+bin/
+obj/
+out/
+artifacts/
+
+## IDE / editor
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+
+## OS
+.DS_Store
+Thumbs.db
+
+## Node
+node_modules/
+
+## Logs / temp
+*.log
+*.tmp
