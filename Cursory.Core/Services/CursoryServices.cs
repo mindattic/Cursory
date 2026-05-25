@@ -12,10 +12,14 @@ public static class CursoryServices
 {
     public static IServiceCollection AddCursoryCore(this IServiceCollection services, IConfiguration config)
     {
-        var usersPath = config["Cursory:UsersPath"]
-            ?? Path.Combine(
+        // Use IsNullOrWhiteSpace — not ?? — because IConfiguration returns the empty string
+        // for keys present-but-blank in appsettings.json. `?? default` only catches null.
+        var configured = config["Cursory:UsersPath"];
+        var usersPath = string.IsNullOrWhiteSpace(configured)
+            ? Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                "MindAttic", "Cursory", "users.json");
+                "MindAttic", "Cursory", "users.json")
+            : configured;
         services.AddSingleton(_ => new UserRepository(usersPath));
         services.AddSingleton<AuthService>();
         services.AddSingleton<RoomState>();

@@ -15,6 +15,8 @@ public class UserRepository
 
     public UserRepository(string filePath)
     {
+        if (string.IsNullOrWhiteSpace(filePath))
+            throw new ArgumentException("UserRepository file path is required.", nameof(filePath));
         this.filePath = filePath;
     }
 
