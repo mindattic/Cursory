@@ -1,0 +1,13 @@
+{
+  "name": "cursory-e2e",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cypress harness for the Cursory Blazor app. The C# build remains the source of truth; this package exists only so `npx cypress open` / `npm test` work without ceremony.",
+  "scripts": {
+    "test": "cypress run",
+    "test:open": "cypress open"
+  },
+  "devDependencies": {
+    "cypress": "^13.15.0"
+  }
+}

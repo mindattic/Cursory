@@ -51,6 +51,18 @@ public class GameLoopService : BackgroundService
                         if (dropped > 0) log.LogInformation("Evicted {N} stale cursor(s)", dropped);
                     }
                     var snap = room.Snapshot();
+                    if (room.ConsumeGeometryRebroadcast())
+                    {
+                        // Level switch or full reset — push the fresh static geometry to every
+                        // client before the next snapshot so walls/labels for the new level
+                        // arrive ahead of the cursor/block state that references them.
+                        await hub.Clients.All.SendAsync("Geometry", room.GeometryMessage(), stoppingToken);
+                    }
+                    var announceLevel = room.ConsumeLevelAnnouncement();
+                    if (announceLevel > 0)
+                    {
+                        await hub.Clients.All.SendAsync("LevelLoaded", announceLevel, stoppingToken);
+                    }
                     await hub.Clients.All.SendAsync("Snapshot", snap, stoppingToken);
 
                     // Slow-tick canary: alert operators when a tick crowds the 33 ms budget.

@@ -201,15 +201,12 @@ public class RoomStateTests
     /// Snapshot — sending labels on every tick is wasted bandwidth at 100 cursors × 30 Hz.
     /// </summary>
     [Test]
-    public void GeometryMessage_includes_all_seeded_labels_and_walls()
+    public void GeometryMessage_includes_default_level_label()
     {
         var room = new RoomState();
         var geom = room.GeometryMessage();
-        Assert.That(geom.Labels, Has.Some.Matches<WorldLabel>(l => l.Id == "label-A"));
-        Assert.That(geom.Labels, Has.Some.Matches<WorldLabel>(l => l.Id == "label-B"));
-        Assert.That(geom.Labels, Has.Some.Matches<WorldLabel>(l => l.Id == "label-C"));
-        Assert.That(geom.Labels, Has.Some.Matches<WorldLabel>(l => l.Id == "label-D"));
-        Assert.That(geom.Walls, Is.Not.Empty);
+        // Default level is 1 — its label is seeded with id "L1-label".
+        Assert.That(geom.Labels, Has.Some.Matches<WorldLabel>(l => l.Id == "L1-label"));
     }
 
     /// <summary>

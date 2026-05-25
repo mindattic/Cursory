@@ -85,4 +85,31 @@ public class RoomHub : Hub
         room.RecordWhistle(userId, x, y);
         return Task.CompletedTask;
     }
+
+    /// <summary>Kick off a vote to re-seed the current level.</summary>
+    public Task StartResetVote()
+    {
+        var userId = Context.User?.FindFirst("UserId")?.Value;
+        if (string.IsNullOrEmpty(userId)) return Task.CompletedTask;
+        room.StartResetVote(userId);
+        return Task.CompletedTask;
+    }
+
+    /// <summary>Kick off a vote to switch to a different level.</summary>
+    public Task StartLevelVote(int targetLevel)
+    {
+        var userId = Context.User?.FindFirst("UserId")?.Value;
+        if (string.IsNullOrEmpty(userId)) return Task.CompletedTask;
+        room.StartLevelVote(userId, targetLevel);
+        return Task.CompletedTask;
+    }
+
+    /// <summary>Cast yes/no on the active vote.</summary>
+    public Task CastVote(bool yes)
+    {
+        var userId = Context.User?.FindFirst("UserId")?.Value;
+        if (string.IsNullOrEmpty(userId)) return Task.CompletedTask;
+        room.CastVote(userId, yes);
+        return Task.CompletedTask;
+    }
 }

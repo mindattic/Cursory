@@ -11,11 +11,45 @@
         <span class="room-hud-name">@DisplayName</span>
         <span class="room-hud-dot" style="background:@Color"></span>
         <span id="room-status" class="room-status room-status-connecting" title="Connection status">Connecting…</span>
-        <span class="room-hud-hint">Drag empty space to pan · click a block to attach a cursor · click to whistle</span>
+        <span class="room-hud-spacer"></span>
+        <label class="room-hud-level">
+            Level
+            <select id="room-level-select">
+                <option value="1">1 — Drop it on the pad</option>
+                <option value="2">2 — Weigh and pass</option>
+                <option value="3">3 — Pivot the couch</option>
+                <option value="4">4 — Stand together, then heave</option>
+                <option value="5">5 — Heavy heave</option>
+                <option value="6">6 — Mirror match</option>
+                <option value="7">7 — Stand and slide</option>
+                <option value="8">8 — Block taxi</option>
+                <option value="9">9 — Couch corner</option>
+                <option value="10">10 — Tug steady</option>
+                <option value="11">11 — Two-key lock</option>
+                <option value="12">12 — Spinner</option>
+                <option value="13">13 — Door hold</option>
+                <option value="14">14 — Long thread</option>
+            </select>
+        </label>
+        <button id="room-reset-btn" type="button" class="room-hud-reset">Reset</button>
         <form method="post" action="/api/auth/logout" class="room-hud-logout">
             <AntiforgeryToken />
             <button type="submit">Sign out</button>
         </form>
+    </div>
+    <div id="room-level-banner" class="room-level-banner" hidden>
+        <div class="room-level-banner-title" id="room-level-banner-title"></div>
+        <div class="room-level-banner-sub"   id="room-level-banner-sub"></div>
+    </div>
+    <div id="room-vote-overlay" class="room-vote-overlay" hidden>
+        <div class="room-vote-card">
+            <div class="room-vote-title" id="room-vote-title">Vote in progress</div>
+            <div class="room-vote-tally"><span id="room-vote-yes">0</span> yes / <span id="room-vote-need">0</span> needed · <span id="room-vote-no">0</span> no</div>
+            <div class="room-vote-buttons">
+                <button type="button" id="room-vote-yes-btn" class="room-vote-yes">Yes</button>
+                <button type="button" id="room-vote-no-btn"  class="room-vote-no">No</button>
+            </div>
+        </div>
     </div>
     <div id="room-viewport" class="room-viewport">
         <canvas id="room-canvas"></canvas>

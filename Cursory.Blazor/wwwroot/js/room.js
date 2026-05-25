@@ -138,11 +138,33 @@ export async function start(opts) {
     canvas.addEventListener('mousedown', onMouseDown);
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
+
+    // HUD wiring — Reset button + level dropdown + vote overlay.
+    const resetBtn = document.getElementById('room-reset-btn');
+    const levelSelect = document.getElementById('room-level-select');
+    const voteYesBtn = document.getElementById('room-vote-yes-btn');
+    const voteNoBtn  = document.getElementById('room-vote-no-btn');
+    const onResetClick  = () => { if (connection) connection.invoke('StartResetVote').catch(noop); };
+    const onLevelChange = (e) => {
+        const lvl = parseInt(e.target.value, 10);
+        if (lvl && connection) connection.invoke('StartLevelVote', lvl).catch(noop);
+    };
+    const onVoteYes = () => { if (connection) connection.invoke('CastVote', true).catch(noop); };
+    const onVoteNo  = () => { if (connection) connection.invoke('CastVote', false).catch(noop); };
+    if (resetBtn)    resetBtn.addEventListener('click', onResetClick);
+    if (levelSelect) levelSelect.addEventListener('change', onLevelChange);
+    if (voteYesBtn)  voteYesBtn.addEventListener('click', onVoteYes);
+    if (voteNoBtn)   voteNoBtn.addEventListener('click', onVoteNo);
+
     detachListeners = () => {
         canvas.removeEventListener('mousedown', onMouseDown);
         window.removeEventListener('mousemove', onMouseMove);
         window.removeEventListener('mouseup', onMouseUp);
         window.removeEventListener('resize', resize);
+        if (resetBtn)    resetBtn.removeEventListener('click', onResetClick);
+        if (levelSelect) levelSelect.removeEventListener('change', onLevelChange);
+        if (voteYesBtn)  voteYesBtn.removeEventListener('click', onVoteYes);
+        if (voteNoBtn)   voteNoBtn.removeEventListener('click', onVoteNo);
     };
 
     // SignalR connection.
@@ -160,8 +182,11 @@ export async function start(opts) {
         if (msg.worldWidth)  state.world.width  = msg.worldWidth;
         if (msg.worldHeight) state.world.height = msg.worldHeight;
     });
+    connection.on('LevelLoaded', (level) => showLevelBanner(level));
     connection.on('Snapshot', (snap) => {
         state.snapshot = snap;
+        renderVote(snap.vote);
+        syncLevelDropdown(snap.currentLevel);
         // Drive a local whistle anim for any whistles we didn't fire ourselves (others' clicks).
         if (snap.whistles && snap.whistles.length) {
             for (const w of snap.whistles) {
@@ -596,6 +621,71 @@ function playWhistle(color) {
         osc.start(now);
         osc.stop(now + 0.45);
     } catch (e) { /* audio failure should never break the room */ }
+}
+
+function renderVote(vote) {
+    const overlay = document.getElementById('room-vote-overlay');
+    if (!overlay) return;
+    if (!vote) {
+        overlay.setAttribute('hidden', '');
+        return;
+    }
+    overlay.removeAttribute('hidden');
+    const titleEl = document.getElementById('room-vote-title');
+    if (titleEl) {
+        if (vote.kind === 1 /* SelectLevel */)
+            titleEl.textContent = `Switch to Level ${vote.targetLevel}?`;
+        else
+            titleEl.textContent = 'Reset the level?';
+    }
+    const yesEl  = document.getElementById('room-vote-yes');
+    const noEl   = document.getElementById('room-vote-no');
+    const needEl = document.getElementById('room-vote-need');
+    if (yesEl)  yesEl.textContent  = vote.yesUserIds.length;
+    if (noEl)   noEl.textContent   = vote.noUserIds.length;
+    if (needEl) needEl.textContent = vote.quorum;
+    // Disable the buttons if I've already voted on this round.
+    const alreadyVoted =
+        vote.yesUserIds.includes(state.me.userId) ||
+        vote.noUserIds.includes(state.me.userId);
+    const yesBtn = document.getElementById('room-vote-yes-btn');
+    const noBtn  = document.getElementById('room-vote-no-btn');
+    if (yesBtn) yesBtn.disabled = alreadyVoted;
+    if (noBtn)  noBtn.disabled  = alreadyVoted;
+}
+
+let _lastSeenLevel = 0;
+function syncLevelDropdown(level) {
+    if (!level) return;
+    const sel = document.getElementById('room-level-select');
+    if (sel) {
+        const target = String(level);
+        if (sel.value !== target) sel.value = target;
+    }
+    // Pop the level banner whenever the active level changes — covers the case where
+    // a client connects mid-game or the server-broadcast LevelLoaded event was missed.
+    if (level !== _lastSeenLevel) {
+        if (_lastSeenLevel !== 0) showLevelBanner(level);
+        _lastSeenLevel = level;
+    }
+}
+
+function showLevelBanner(level) {
+    const labels = state.geometry.labels || [];
+    const match = labels.find(l => (l.id || '').startsWith(`L${level}-label`));
+    const banner = document.getElementById('room-level-banner');
+    const titleEl = document.getElementById('room-level-banner-title');
+    const subEl   = document.getElementById('room-level-banner-sub');
+    if (!banner || !titleEl || !subEl) return;
+    titleEl.textContent = match ? match.title : `Level ${level}`;
+    subEl.textContent   = match ? match.subtitle : '';
+    // Re-trigger the CSS animation by removing + re-adding the element class.
+    banner.removeAttribute('hidden');
+    banner.style.animation = 'none';
+    void banner.offsetWidth;        // force reflow
+    banner.style.animation = '';
+    clearTimeout(banner._hideTimer);
+    banner._hideTimer = setTimeout(() => banner.setAttribute('hidden', ''), 3500);
 }
 
 function renderStatus() {

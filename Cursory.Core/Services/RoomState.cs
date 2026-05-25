@@ -20,6 +20,12 @@ public class RoomState
     private readonly ConcurrentDictionary<string, ShapeActor> shapes = new();
     private readonly ConcurrentDictionary<string, ShapeGoal> shapeGoals = new();
     private readonly ConcurrentQueue<Whistle> whistles = new();
+    private RoomVote? activeVote;
+    private readonly Lock voteLock = new();
+    /// <summary>Total number of seeded levels. Drives the UI dropdown.</summary>
+    public const int LevelCount = 14;
+    private int currentLevel = 1;
+    private readonly Lock levelLock = new();
     private const int WhistleRingCapacity = 256;
 
     private long currentTick;
@@ -155,6 +161,170 @@ public class RoomState
         return (minX, minY, maxX, maxY);
     }
 
+    // ── reset vote ───────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Snapshot of the active vote, or null. Defensive copy so the caller can't mutate it.
+    /// </summary>
+    public RoomVote? CurrentVote
+    {
+        get
+        {
+            lock (voteLock)
+            {
+                return activeVote is null ? null : CloneVote(activeVote);
+            }
+        }
+    }
+
+    /// <summary>The currently-loaded level (1..LevelCount).</summary>
+    public int CurrentLevel
+    {
+        get { lock (levelLock) return currentLevel; }
+    }
+
+    /// <summary>Begin a reset vote. Single-player rooms pass immediately.</summary>
+    public bool StartResetVote(string userId) =>
+        StartVote(userId, VoteKind.Reset, 0);
+
+    /// <summary>Begin a level-switch vote. Target must be in 1..LevelCount.</summary>
+    public bool StartLevelVote(string userId, int targetLevel)
+    {
+        if (targetLevel < 1 || targetLevel > LevelCount) return false;
+        if (targetLevel == CurrentLevel) return false;  // no-op votes get rejected
+        return StartVote(userId, VoteKind.SelectLevel, targetLevel);
+    }
+
+    private bool StartVote(string userId, VoteKind kind, int targetLevel)
+    {
+        lock (voteLock)
+        {
+            if (activeVote is not null) return false;
+            if (!cursors.ContainsKey(userId)) return false;
+            var voters = cursors.Keys.ToList();
+            if (voters.Count == 0) return false;
+            var quorum = (int)Math.Ceiling(voters.Count * 2.0 / 3.0);
+            activeVote = new RoomVote
+            {
+                Kind = kind,
+                TargetLevel = targetLevel,
+                StartedAtTick = CurrentTick,
+                StartedByUserId = userId,
+                Voters = voters,
+                YesUserIds = [userId],
+                NoUserIds = [],
+                Quorum = quorum,
+            };
+            ResolveVoteIfReady();
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Cast a vote on the active reset. The caller must be in the voter snapshot taken when
+    /// the vote started (latecomers don't get a say on the in-progress round). Re-voting
+    /// flips your prior choice.
+    /// </summary>
+    public void CastVote(string userId, bool yes)
+    {
+        lock (voteLock)
+        {
+            if (activeVote is null) return;
+            if (!activeVote.Voters.Contains(userId)) return;
+            activeVote.YesUserIds.Remove(userId);
+            activeVote.NoUserIds.Remove(userId);
+            if (yes) activeVote.YesUserIds.Add(userId);
+            else activeVote.NoUserIds.Add(userId);
+            ResolveVoteIfReady();
+        }
+    }
+
+    private void ResolveVoteIfReady()
+    {
+        // Must be called under voteLock.
+        if (activeVote is null) return;
+        if (activeVote.YesUserIds.Count >= activeVote.Quorum)
+        {
+            ApplyVote(activeVote);
+            activeVote = null;
+            return;
+        }
+        // Reject early if YES can no longer reach quorum even with every undecided voter
+        // saying yes — saves players from staring at a doomed vote until the timeout.
+        var undecided = activeVote.Voters.Count - activeVote.YesUserIds.Count - activeVote.NoUserIds.Count;
+        if (activeVote.YesUserIds.Count + undecided < activeVote.Quorum)
+        {
+            activeVote = null;
+        }
+    }
+
+    private void ApplyVote(RoomVote v)
+    {
+        switch (v.Kind)
+        {
+            case VoteKind.Reset:
+                ResetPuzzles();
+                break;
+            case VoteKind.SelectLevel:
+                SwitchToLevel(v.TargetLevel);
+                break;
+        }
+    }
+
+    private void TimeoutVoteIfExpired()
+    {
+        lock (voteLock)
+        {
+            if (activeVote is null) return;
+            if (CurrentTick - activeVote.StartedAtTick >= RoomVote.TimeoutTicks)
+            {
+                activeVote = null;
+            }
+        }
+    }
+
+    private static RoomVote CloneVote(RoomVote v) => new()
+    {
+        Kind = v.Kind,
+        TargetLevel = v.TargetLevel,
+        StartedAtTick = v.StartedAtTick,
+        StartedByUserId = v.StartedByUserId,
+        Voters = [..v.Voters],
+        YesUserIds = [..v.YesUserIds],
+        NoUserIds = [..v.NoUserIds],
+        Quorum = v.Quorum,
+    };
+
+    private void SwitchToLevel(int level)
+    {
+        lock (levelLock)
+        {
+            currentLevel = Math.Clamp(level, 1, LevelCount);
+        }
+        ResetPuzzles();
+        Interlocked.Exchange(ref pendingGeometryRebroadcast, 1);
+        Interlocked.Exchange(ref pendingLevelAnnouncement, currentLevel);
+    }
+
+    private int pendingGeometryRebroadcast;
+    private int pendingLevelAnnouncement;
+
+    /// <summary>
+    /// True iff a level switch or reset has happened since the last broadcast. The loop
+    /// reads + clears this each tick and, when set, re-sends the Geometry message (walls +
+    /// labels change with the level) AND a LevelLoaded event for the banner.
+    /// </summary>
+    public bool ConsumeGeometryRebroadcast() =>
+        Interlocked.Exchange(ref pendingGeometryRebroadcast, 0) == 1;
+
+    /// <summary>
+    /// When non-zero, the loop should fire a LevelLoaded event for this level number and
+    /// then clear it. Decoupled from the geometry rebroadcast so a pure "Reset" vote (same
+    /// level re-seeded) doesn't pop the banner unnecessarily.
+    /// </summary>
+    public int ConsumeLevelAnnouncement() =>
+        Interlocked.Exchange(ref pendingLevelAnnouncement, 0);
+
     public void RecordWhistle(string userId, double x, double y)
     {
         if (!cursors.TryGetValue(userId, out var c)) return;
@@ -242,6 +412,9 @@ public class RoomState
             Shapes = shapes.Values.Select(CloneShape).ToList(),
             ShapeGoals = shapeGoals.Values.Select(CloneShapeGoal).ToList(),
             Whistles = whistles.Where(w => tick - w.Tick < 30).Select(CloneWhistle).ToList(),
+            Vote = CurrentVote,
+            CurrentLevel = CurrentLevel,
+            LevelCount = LevelCount,
         };
     }
 
@@ -315,206 +488,368 @@ public class RoomState
 
     private void SeedPuzzles()
     {
-        SeedPuzzleA();
-        SeedPuzzleB();
-        SeedPuzzleC();
-        SeedPuzzleD();
-        SeedPuzzleE();
+        switch (currentLevel)
+        {
+            case 1:  SeedLevel1();  break;
+            case 2:  SeedLevel2();  break;
+            case 3:  SeedLevel3();  break;
+            case 4:  SeedLevel4();  break;
+            case 5:  SeedLevel5();  break;
+            case 6:  SeedLevel6();  break;
+            case 7:  SeedLevel7();  break;
+            case 8:  SeedLevel8();  break;
+            case 9:  SeedLevel9();  break;
+            case 10: SeedLevel10(); break;
+            case 11: SeedLevel11(); break;
+            case 12: SeedLevel12(); break;
+            case 13: SeedLevel13(); break;
+            case 14: SeedLevel14(); break;
+            default: SeedLevel1();  break;
+        }
     }
 
     /// <summary>
-    /// Puzzle A — "Heave-ho": a single heavy block, one goal zone, no obstacles.
-    /// Friction threshold is set so one cursor can't budge it; two pulling the same way can.
-    /// The teaching puzzle: shows the sum-of-forces mechanic with the minimum surface area.
+    /// Drops every puzzle artefact and re-seeds from scratch. Cursors and whistles are
+    /// preserved (the players stay in the room); only level state resets. Called when a
+    /// reset vote passes.
     /// </summary>
-    private void SeedPuzzleA()
+    internal void ResetPuzzles()
     {
-        const string blockId = "block-A";
+        blocks.Clear();
+        goals.Clear();
+        walls.Clear();
+        switches.Clear();
+        doors.Clear();
+        shapes.Clear();
+        shapeGoals.Clear();
+        labels.Clear();
+        // Detach every cursor from whatever it was grabbing so the post-reset world
+        // doesn't have phantom attachments pointing at deleted ids.
+        foreach (var c in cursors.Values)
+        {
+            c.AttachedBlockId = null;
+            c.AttachedShapeId = null;
+        }
+        SeedPuzzles();
+    }
+
+    /// <summary>
+    /// Level 1 — "Drop it on the pad". A single light block, a larger goal square.
+    /// Friction is low enough that one cursor can drag the block solo; this is the
+    /// teaching level. Mass = 2 (very light).
+    /// </summary>
+    private void SeedLevel1()
+    {
+        const string blockId = "L1-block";
         blocks[blockId] = new BlockState
         {
-            Id = blockId, X = 2000, Y = 5000, W = 220, H = 220,
-            Mass = 6, StaticFriction = 1.2, Color = "#3a3a3a",
+            Id = blockId, X = 3500, Y = 5000, W = 140, H = 140,
+            Mass = 2, StaticFriction = 0.2, Color = "#D85A30",
         };
-        var goalId = "goal-A";
-        goals[goalId] = new GoalZone
+        goals["L1-goal"] = new GoalZone
         {
-            Id = goalId, X = 3400, Y = 5000, W = 320, H = 320, TargetBlockId = blockId,
+            Id = "L1-goal", X = 6500, Y = 5000, W = 600, H = 600, TargetBlockId = blockId,
         };
-        labels["label-A"] = new WorldLabel
+        labels["L1-label"] = new WorldLabel
         {
-            Id = "label-A", X = 2700, Y = 4500,
-            Title = "A — Heave-ho",
-            Subtitle = "One block, two cursors needed.",
+            Id = "L1-label", X = 5000, Y = 3500,
+            Title = "Level 1 — Drop it on the pad",
+            Subtitle = "Click the small block and drag it into the big square.",
         };
     }
 
     /// <summary>
-    /// Puzzle B — "Hold the gate": two pressure pads, each requiring one cursor on it; the
-    /// gate between them opens only when both pads are pressed simultaneously. A third
-    /// cursor (or one of the first two, before the pads are pressed) drags the block through.
-    /// The teaching puzzle for switches + doors. Three-cursor coordination minimum.
+    /// Level 2 — "Weigh and pass". A heavy weight-block sits on a pressure pad; a door
+    /// stays open while the pad is pressed; a second (light) block has to be dragged
+    /// through the now-open door onto the target. The teaching puzzle for the
+    /// block-on-switch mechanic: switches count both cursors AND blocks toward their
+    /// RequiredCount, so a heavy block planted on the pad holds the door open.
     /// </summary>
-    private void SeedPuzzleB()
+    private void SeedLevel2()
     {
-        const string switchAId = "switch-B1";
-        const string switchBId = "switch-B2";
-        switches[switchAId] = new SwitchTile
-        {
-            Id = switchAId, X = 4800, Y = 4400, W = 220, H = 220,
-            RequiredCount = 1, Color = "#1D9E75",
-        };
-        switches[switchBId] = new SwitchTile
-        {
-            Id = switchBId, X = 4800, Y = 5600, W = 220, H = 220,
-            RequiredCount = 1, Color = "#1D9E75",
-        };
-        // The corridor walls leading to the gate.
-        walls["wall-B-top"]    = new Wall { Id = "wall-B-top",    X = 5300, Y = 4400, W = 600, H = 80 };
-        walls["wall-B-bot"]    = new Wall { Id = "wall-B-bot",    X = 5300, Y = 5600, W = 600, H = 80 };
-        walls["wall-B-back"]   = new Wall { Id = "wall-B-back",   X = 5000, Y = 5000, W = 80,  H = 800 };
-        // The gated door — open when both switches are pressed.
-        doors["door-B"] = new Door
-        {
-            Id = "door-B", X = 5600, Y = 5000, W = 80, H = 800,
-            RequiredSwitchIds = [switchAId, switchBId],
-        };
-        // The block that has to make it through, and its goal beyond the door.
-        const string blockId = "block-B";
-        blocks[blockId] = new BlockState
-        {
-            Id = blockId, X = 5300, Y = 5000, W = 140, H = 140,
-            Mass = 4, StaticFriction = 0.6, Color = "#D85A30",
-        };
-        goals["goal-B"] = new GoalZone
-        {
-            Id = "goal-B", X = 6200, Y = 5000, W = 280, H = 280, TargetBlockId = blockId,
-        };
-        labels["label-B"] = new WorldLabel
-        {
-            Id = "label-B", X = 5300, Y = 4200,
-            Title = "B — Hold the gate",
-            Subtitle = "Two pads. Open the door. Push the block through.",
-        };
-    }
+        const string weightId = "L2-weight";
+        const string passId = "L2-pass";
+        const string switchId = "L2-switch";
+        const string doorId = "L2-door";
 
-    /// <summary>
-    /// Puzzle C — "The slot": a corridor maze. The block has to be pulled through two doglegs
-    /// before reaching its goal. Pulls work better than pushes — the cursor anchor stays on the
-    /// leading edge of the block, so the team learns to navigate around corners cooperatively.
-    /// No switches: the difficulty is geometric, not gated.
-    /// </summary>
-    private void SeedPuzzleC()
-    {
-        // The maze walls (a serpentine corridor).
-        walls["wall-C1"] = new Wall { Id = "wall-C1", X = 7600, Y = 3500, W = 1200, H = 60 };
-        walls["wall-C2"] = new Wall { Id = "wall-C2", X = 7600, Y = 4500, W = 1200, H = 60 };
-        walls["wall-C3"] = new Wall { Id = "wall-C3", X = 7000, Y = 4000, W = 60,  H = 940 };
-        walls["wall-C4"] = new Wall { Id = "wall-C4", X = 8200, Y = 4000, W = 60,  H = 940 };
-        walls["wall-C5"] = new Wall { Id = "wall-C5", X = 7900, Y = 5500, W = 660,  H = 60 };
-        walls["wall-C6"] = new Wall { Id = "wall-C6", X = 7250, Y = 5500, W = 60,  H = 1060 };
-        walls["wall-C7"] = new Wall { Id = "wall-C7", X = 8550, Y = 5000, W = 60,  H = 1060 };
-
-        const string blockId = "block-C";
-        blocks[blockId] = new BlockState
+        blocks[weightId] = new BlockState
         {
-            Id = blockId, X = 7600, Y = 4000, W = 120, H = 120,
-            Mass = 3, StaticFriction = 0.5, Color = "#7F77DD",
+            Id = weightId, X = 3200, Y = 4400, W = 200, H = 200,
+            Mass = 5, StaticFriction = 0.6, Color = "#BA7517",
         };
-        goals["goal-C"] = new GoalZone
+        blocks[passId] = new BlockState
         {
-            Id = "goal-C", X = 7900, Y = 6200, W = 240, H = 240, TargetBlockId = blockId,
+            Id = passId, X = 3200, Y = 5800, W = 140, H = 140,
+            Mass = 2, StaticFriction = 0.2, Color = "#7F77DD",
         };
-        labels["label-C"] = new WorldLabel
-        {
-            Id = "label-C", X = 7600, Y = 3200,
-            Title = "C — The slot",
-            Subtitle = "Drag the block down through the corridor.",
-        };
-    }
-
-    /// <summary>
-    /// Puzzle D — "Stand together": a single pressure pad that needs two cursors on it
-    /// simultaneously to open the door. Teaches the "RequiredCount > 1" pattern with the
-    /// minimum surface area, distinct from puzzle B (which uses two separate switches).
-    /// </summary>
-    private void SeedPuzzleD()
-    {
-        const string switchId = "switch-D";
         switches[switchId] = new SwitchTile
         {
-            Id = switchId, X = 3600, Y = 7800, W = 280, H = 280,
-            RequiredCount = 2, Color = "#BA7517",
+            Id = switchId, X = 4200, Y = 4400, W = 260, H = 260,
+            RequiredCount = 1, Color = "#1D9E75",
         };
-        // Walls that frame the corridor so the block can't simply be dragged around the door.
-        walls["wall-D-top"] = new Wall { Id = "wall-D-top", X = 4500, Y = 7400, W = 1600, H = 60 };
-        walls["wall-D-bot"] = new Wall { Id = "wall-D-bot", X = 4500, Y = 8200, W = 1600, H = 60 };
-        walls["wall-D-back"] = new Wall { Id = "wall-D-back", X = 5300, Y = 7800, W = 60, H = 800 };
-        doors["door-D"] = new Door
+        // Frame the corridor — the pass-block can't be routed around the door.
+        walls["L2-wall-top"]   = new Wall { Id = "L2-wall-top",   X = 5400, Y = 5400, W = 1600, H = 60 };
+        walls["L2-wall-bot"]   = new Wall { Id = "L2-wall-bot",   X = 5400, Y = 6200, W = 1600, H = 60 };
+        walls["L2-wall-back"]  = new Wall { Id = "L2-wall-back",  X = 4600, Y = 5800, W = 60,   H = 800 };
+        doors[doorId] = new Door
         {
-            Id = "door-D", X = 4500, Y = 7800, W = 60, H = 800,
+            Id = doorId, X = 5400, Y = 5800, W = 60, H = 800,
             RequiredSwitchIds = [switchId],
         };
-        const string blockId = "block-D";
-        blocks[blockId] = new BlockState
+        goals["L2-goal"] = new GoalZone
         {
-            Id = blockId, X = 4100, Y = 7800, W = 140, H = 140,
-            Mass = 3, StaticFriction = 0.4, Color = "#D4537E",
+            Id = "L2-goal", X = 6400, Y = 5800, W = 400, H = 400, TargetBlockId = passId,
         };
-        goals["goal-D"] = new GoalZone
+        labels["L2-label"] = new WorldLabel
         {
-            Id = "goal-D", X = 5000, Y = 7800, W = 240, H = 240, TargetBlockId = blockId,
-        };
-        labels["label-D"] = new WorldLabel
-        {
-            Id = "label-D", X = 4200, Y = 7100,
-            Title = "D — Stand together",
-            Subtitle = "Two cursors on the same pad. One drags the block through.",
+            Id = "L2-label", X = 4800, Y = 3600,
+            Title = "Level 2 — Weigh and pass",
+            Subtitle = "Drag the heavy block onto the pad. The door opens. Slide the small block through.",
         };
     }
 
     /// <summary>
-    /// Puzzle E — "Thread the needle": the headline cooperative-rigid-body level.
-    /// An L-shape sits on the left, a vertical wall with a narrow gap runs down the middle,
-    /// a goal square waits on the right. Two cursors must coordinate force + torque to
-    /// rotate and thread the L through the gap, then drag every piece inside the goal.
+    /// Level 3 — "Pivot the couch". An L-shaped rigid body has to be threaded through a
+    /// gap in a wall, like maneuvering a sofa through a doorway. The L's outer envelope
+    /// (1 000 × 1 000) is wider than the 800-unit gap; the only way through is to rotate
+    /// the L so its 300-thick arm aligns with the gap. Mass = 8, MoI = 400 000 — heavy
+    /// enough that one cursor can't move it, two cooperating cursors must coordinate
+    /// force and torque to pivot it through. The teaching puzzle for the compound
+    /// rigid body with full rotation physics.
     /// </summary>
-    private void SeedPuzzleE()
+    private void SeedLevel3()
     {
-        // The two wall segments framing the gap. Gap is 800 wide vertically (y 5200..6000),
-        // narrower than the L's outer dimensions (1000 × 1000) but wider than its arm
-        // thickness (300), so threading requires rotating the L to align its arm with the gap.
-        walls["wall-E-top"]    = new Wall { Id = "wall-E-top",    X = 2500, Y = 3000, W = 80, H = 4000 };
-        walls["wall-E-bot"]    = new Wall { Id = "wall-E-bot",    X = 2500, Y = 7200, W = 80, H = 4000 };
-        // Frame the corridor so the L can't be routed around the gap.
-        walls["wall-E-floor"]  = new Wall { Id = "wall-E-floor",  X = 0,    Y = 9200, W = 5000, H = 80 };
-        walls["wall-E-ceil"]   = new Wall { Id = "wall-E-ceil",   X = 0,    Y = 800,  W = 5000, H = 80 };
+        walls["L3-wall-top"] = new Wall { Id = "L3-wall-top", X = 5000, Y = 3000, W = 80, H = 4000 };
+        walls["L3-wall-bot"] = new Wall { Id = "L3-wall-bot", X = 5000, Y = 7200, W = 80, H = 4000 };
 
-        const string shapeId = "shape-E";
-        // The L is two AABB pieces in body-local space. Centre of the body frame is the
-        // inside corner of the L. The horizontal arm extends to the right, the vertical
-        // arm extends downward. Outer dimensions ~ 1000 × 1000, arm thickness 300.
+        const string shapeId = "L3-shape";
         var horiz = new ShapePiece { LocalX = 350, LocalY = -150, HalfW = 350, HalfH = 150 };
         var vert  = new ShapePiece { LocalX = -150, LocalY = 350, HalfW = 150, HalfH = 350 };
         shapes[shapeId] = new ShapeActor
         {
-            Id = shapeId, X = 1500, Y = 5600,
+            Id = shapeId, X = 3200, Y = 5600,
             Angle = 0, Mass = 8, MomentOfInertia = 400_000,
             StaticFriction = 0.6, RotationalFriction = 60,
             Color = "#D85A30",
             Pieces = [horiz, vert],
         };
-        shapeGoals["shape-goal-E"] = new ShapeGoal
+        shapeGoals["L3-goal"] = new ShapeGoal
         {
-            Id = "shape-goal-E", X = 3800, Y = 5600, W = 1800, H = 1800,
+            Id = "L3-goal", X = 7000, Y = 5600, W = 1800, H = 1800,
             TargetShapeId = shapeId,
         };
-        labels["label-E"] = new WorldLabel
+        labels["L3-label"] = new WorldLabel
         {
-            Id = "label-E", X = 2500, Y = 1200,
-            Title = "E — Thread the needle",
-            Subtitle = "Rotate the L. Pull it through the gap. Both cursors needed.",
+            Id = "L3-label", X = 5000, Y = 1800,
+            Title = "Level 3 — Pivot the couch",
+            Subtitle = "Two cursors. Rotate the L so its arm fits the gap. Thread it through.",
         };
     }
+
+    /// <summary>
+    /// Level 4 — "Stand together". A pressure pad in front of a closed door needs two
+    /// cursors standing on it to open. While the door is open, both cursors then have to
+    /// release the pad and cooperate on dragging a heavy block (mass = 7, friction = 1.1)
+    /// through the open passage into the goal — a single cursor can't break friction.
+    /// The hard part: keeping the door open while also pulling the block, which forces
+    /// timing + role-sharing in a two-player room. Larger pad (RequiredCount = 2) renders
+    /// as a circle in the client.
+    /// </summary>
+    private void SeedLevel4()
+    {
+        const string switchId = "L4-switch";
+        const string blockId = "L4-block";
+        const string doorId = "L4-door";
+
+        switches[switchId] = new SwitchTile
+        {
+            Id = switchId, X = 3500, Y = 5000, W = 320, H = 320,
+            RequiredCount = 2, Color = "#7F77DD",
+        };
+        // Frame the corridor so the block can't be routed around the door.
+        walls["L4-wall-top"]  = new Wall { Id = "L4-wall-top",  X = 5800, Y = 4500, W = 2400, H = 60 };
+        walls["L4-wall-bot"]  = new Wall { Id = "L4-wall-bot",  X = 5800, Y = 5500, W = 2400, H = 60 };
+        walls["L4-wall-back"] = new Wall { Id = "L4-wall-back", X = 4700, Y = 5000, W = 60,   H = 1000 };
+        doors[doorId] = new Door
+        {
+            Id = doorId, X = 5800, Y = 5000, W = 60, H = 1000,
+            RequiredSwitchIds = [switchId],
+        };
+        blocks[blockId] = new BlockState
+        {
+            Id = blockId, X = 5300, Y = 5000, W = 200, H = 200,
+            // Heavy: one cursor's pull (force ≈ k × 50 = 1.25) sits right at the threshold;
+            // two cursors cooperating sail past it.
+            Mass = 7, StaticFriction = 1.1, Color = "#D4537E",
+        };
+        goals["L4-goal"] = new GoalZone
+        {
+            Id = "L4-goal", X = 7000, Y = 5000, W = 700, H = 700, TargetBlockId = blockId,
+        };
+        labels["L4-label"] = new WorldLabel
+        {
+            Id = "L4-label", X = 5200, Y = 3500,
+            Title = "Level 4 — Stand together, then heave",
+            Subtitle = "Both cursors on the pad to open the door. Then both pull the heavy block through.",
+        };
+    }
+
+    // ── extension puzzles (5..14) ────────────────────────────────────────────
+    // Each level is a small focused demonstration of one two-cursor mechanic. The
+    // primitives used are: linear force (mass + StaticFriction), torque (offset cursors),
+    // cursor-on-switch, block-on-switch, walls, doors, and rotation through narrow gaps.
+
+    /// <summary>Level 5 — "Heavy heave". Single block, friction so high one cursor can't budge it. Two cursors pulling together can.</summary>
+    private void SeedLevel5()
+    {
+        const string b = "L5-block";
+        blocks[b] = new BlockState { Id = b, X = 3500, Y = 5000, W = 220, H = 220, Mass = 10, StaticFriction = 2.0, Color = "#3a3a3a" };
+        goals["L5-goal"] = new GoalZone { Id = "L5-goal", X = 6500, Y = 5000, W = 500, H = 500, TargetBlockId = b };
+        labels["L5-label"] = new WorldLabel { Id = "L5-label", X = 5000, Y = 3500, Title = "Level 5 — Heavy heave", Subtitle = "Both cursors. Pull together. Friction is brutal." };
+    }
+
+    /// <summary>Level 6 — "Mirror match". Two blocks, two goals. Cursors split up and move them in parallel.</summary>
+    private void SeedLevel6()
+    {
+        const string b1 = "L6-blockA", b2 = "L6-blockB";
+        blocks[b1] = new BlockState { Id = b1, X = 3500, Y = 4000, W = 160, H = 160, Mass = 3, StaticFriction = 0.3, Color = "#7F77DD" };
+        blocks[b2] = new BlockState { Id = b2, X = 3500, Y = 6000, W = 160, H = 160, Mass = 3, StaticFriction = 0.3, Color = "#D85A30" };
+        goals["L6-goalA"] = new GoalZone { Id = "L6-goalA", X = 6500, Y = 4000, W = 400, H = 400, TargetBlockId = b1 };
+        goals["L6-goalB"] = new GoalZone { Id = "L6-goalB", X = 6500, Y = 6000, W = 400, H = 400, TargetBlockId = b2 };
+        labels["L6-label"] = new WorldLabel { Id = "L6-label", X = 5000, Y = 3000, Title = "Level 6 — Mirror match", Subtitle = "Two blocks. Two goals. Divide and conquer." };
+    }
+
+    /// <summary>Level 7 — "Stand and slide". One cursor holds the switch open, the other slides the block through.</summary>
+    private void SeedLevel7()
+    {
+        const string sw = "L7-switch", b = "L7-block", d = "L7-door";
+        switches[sw] = new SwitchTile { Id = sw, X = 3000, Y = 4200, W = 240, H = 240, RequiredCount = 1, Color = "#1D9E75" };
+        blocks[b] = new BlockState { Id = b, X = 3500, Y = 5500, W = 160, H = 160, Mass = 2, StaticFriction = 0.2, Color = "#D4537E" };
+        walls["L7-top"]  = new Wall { Id = "L7-top",  X = 5400, Y = 5100, W = 2000, H = 60 };
+        walls["L7-bot"]  = new Wall { Id = "L7-bot",  X = 5400, Y = 5900, W = 2000, H = 60 };
+        walls["L7-back"] = new Wall { Id = "L7-back", X = 4500, Y = 5500, W = 60,   H = 800 };
+        doors[d] = new Door { Id = d, X = 5300, Y = 5500, W = 60, H = 800, RequiredSwitchIds = [sw] };
+        goals["L7-goal"] = new GoalZone { Id = "L7-goal", X = 6300, Y = 5500, W = 400, H = 400, TargetBlockId = b };
+        labels["L7-label"] = new WorldLabel { Id = "L7-label", X = 4800, Y = 3500, Title = "Level 7 — Stand and slide", Subtitle = "One cursor holds the pad. The other slides the block." };
+    }
+
+    /// <summary>Level 8 — "Block taxi". Carry a small block onto a switch to hold a door open, then go back for a second block.</summary>
+    private void SeedLevel8()
+    {
+        const string sw = "L8-switch", weight = "L8-weight", pass = "L8-pass", d = "L8-door";
+        switches[sw] = new SwitchTile { Id = sw, X = 4000, Y = 4500, W = 240, H = 240, RequiredCount = 1, Color = "#BA7517" };
+        blocks[weight] = new BlockState { Id = weight, X = 3000, Y = 4500, W = 180, H = 180, Mass = 4, StaticFriction = 0.4, Color = "#BA7517" };
+        blocks[pass]   = new BlockState { Id = pass,   X = 3000, Y = 5800, W = 140, H = 140, Mass = 2, StaticFriction = 0.2, Color = "#7F77DD" };
+        walls["L8-top"]  = new Wall { Id = "L8-top",  X = 5500, Y = 5400, W = 2200, H = 60 };
+        walls["L8-bot"]  = new Wall { Id = "L8-bot",  X = 5500, Y = 6200, W = 2200, H = 60 };
+        walls["L8-back"] = new Wall { Id = "L8-back", X = 4500, Y = 5800, W = 60,   H = 800 };
+        doors[d] = new Door { Id = d, X = 5400, Y = 5800, W = 60, H = 800, RequiredSwitchIds = [sw] };
+        goals["L8-goal"] = new GoalZone { Id = "L8-goal", X = 6500, Y = 5800, W = 400, H = 400, TargetBlockId = pass };
+        labels["L8-label"] = new WorldLabel { Id = "L8-label", X = 5000, Y = 3500, Title = "Level 8 — Block taxi", Subtitle = "Park the heavy block on the pad. Door stays open. Now slide the small block." };
+    }
+
+    /// <summary>Level 9 — "Couch corner". A long rectangular ShapeActor must be carried around a 90° turn.</summary>
+    private void SeedLevel9()
+    {
+        const string s = "L9-couch";
+        // Long couch: 800 × 240, two collinear pieces for richer collision.
+        shapes[s] = new ShapeActor
+        {
+            Id = s, X = 3000, Y = 3500, Angle = 0,
+            Mass = 8, MomentOfInertia = 350_000, StaticFriction = 0.6, RotationalFriction = 50,
+            Color = "#7F77DD",
+            Pieces = [ new ShapePiece { LocalX = 0, LocalY = 0, HalfW = 400, HalfH = 120 } ],
+        };
+        walls["L9-w1"] = new Wall { Id = "L9-w1", X = 5000, Y = 3000, W = 4000, H = 60 };
+        walls["L9-w2"] = new Wall { Id = "L9-w2", X = 5000, Y = 4500, W = 2000, H = 60 };
+        walls["L9-w3"] = new Wall { Id = "L9-w3", X = 6200, Y = 6000, W = 60, H = 3000 };
+        walls["L9-w4"] = new Wall { Id = "L9-w4", X = 7400, Y = 6000, W = 60, H = 3000 };
+        shapeGoals["L9-goal"] = new ShapeGoal { Id = "L9-goal", X = 6800, Y = 7000, W = 1000, H = 1000, TargetShapeId = s };
+        labels["L9-label"] = new WorldLabel { Id = "L9-label", X = 5500, Y = 2400, Title = "Level 9 — Couch corner", Subtitle = "Pivot! Around the corner, down the hallway." };
+    }
+
+    /// <summary>Level 10 — "Tug steady". A central block has to be pulled to a goal that requires a SUSTAINED net force.</summary>
+    private void SeedLevel10()
+    {
+        const string b = "L10-block";
+        blocks[b] = new BlockState { Id = b, X = 5000, Y = 5000, W = 200, H = 200, Mass = 6, StaticFriction = 1.4, Color = "#378ADD" };
+        goals["L10-goal"] = new GoalZone { Id = "L10-goal", X = 7500, Y = 5000, W = 500, H = 500, TargetBlockId = b };
+        labels["L10-label"] = new WorldLabel { Id = "L10-label", X = 5500, Y = 3500, Title = "Level 10 — Tug steady", Subtitle = "Two cursors pulling the same direction beats friction. Opposite directions cancel — try not to fight your partner." };
+    }
+
+    /// <summary>Level 11 — "Two-key lock". Two separated switches must be active simultaneously to open a door.</summary>
+    private void SeedLevel11()
+    {
+        const string s1 = "L11-s1", s2 = "L11-s2", b = "L11-block", d = "L11-door";
+        switches[s1] = new SwitchTile { Id = s1, X = 2500, Y = 3500, W = 240, H = 240, RequiredCount = 1, Color = "#1D9E75" };
+        switches[s2] = new SwitchTile { Id = s2, X = 2500, Y = 6500, W = 240, H = 240, RequiredCount = 1, Color = "#1D9E75" };
+        walls["L11-top"]  = new Wall { Id = "L11-top",  X = 5500, Y = 4500, W = 3000, H = 60 };
+        walls["L11-bot"]  = new Wall { Id = "L11-bot",  X = 5500, Y = 5500, W = 3000, H = 60 };
+        walls["L11-back"] = new Wall { Id = "L11-back", X = 4500, Y = 5000, W = 60,   H = 1000 };
+        doors[d] = new Door { Id = d, X = 5400, Y = 5000, W = 60, H = 1000, RequiredSwitchIds = [s1, s2] };
+        blocks[b] = new BlockState { Id = b, X = 4800, Y = 5000, W = 160, H = 160, Mass = 3, StaticFriction = 0.3, Color = "#D4537E" };
+        goals["L11-goal"] = new GoalZone { Id = "L11-goal", X = 6500, Y = 5000, W = 400, H = 400, TargetBlockId = b };
+        labels["L11-label"] = new WorldLabel { Id = "L11-label", X = 5000, Y = 2500, Title = "Level 11 — Two-key lock", Subtitle = "Both pads. Far apart. One cursor each. (Hint: a block on a pad is also a press.)" };
+    }
+
+    /// <summary>Level 12 — "Spinner". A small square shape must be rotated 90° to fit a vertical slot, with very little linear motion required.</summary>
+    private void SeedLevel12()
+    {
+        const string s = "L12-bar";
+        shapes[s] = new ShapeActor
+        {
+            Id = s, X = 3500, Y = 5000, Angle = 0,
+            Mass = 5, MomentOfInertia = 100_000, StaticFriction = 0.7, RotationalFriction = 30,
+            Color = "#D85A30",
+            Pieces = [ new ShapePiece { LocalX = 0, LocalY = 0, HalfW = 350, HalfH = 80 } ],
+        };
+        // Vertical slot — short, only 240 tall. Bar is 700 long × 160 thick; must be rotated upright to fit.
+        walls["L12-l"] = new Wall { Id = "L12-l", X = 5000, Y = 3000, W = 80, H = 3600 };
+        walls["L12-r"] = new Wall { Id = "L12-r", X = 5000, Y = 7000, W = 80, H = 3600 };
+        shapeGoals["L12-goal"] = new ShapeGoal { Id = "L12-goal", X = 6500, Y = 5000, W = 1200, H = 1200, TargetShapeId = s };
+        labels["L12-label"] = new WorldLabel { Id = "L12-label", X = 5000, Y = 2000, Title = "Level 12 — Spinner", Subtitle = "Rotate the bar vertical. Slide it through the slot. Both cursors needed for torque." };
+    }
+
+    /// <summary>Level 13 — "Door hold". Two switches: one opens a door, one closes it. Must time the carry.</summary>
+    private void SeedLevel13()
+    {
+        const string sw = "L13-sw", b = "L13-block", d = "L13-door";
+        switches[sw] = new SwitchTile { Id = sw, X = 2800, Y = 5000, W = 280, H = 280, RequiredCount = 1, Color = "#1D9E75" };
+        walls["L13-top"]  = new Wall { Id = "L13-top",  X = 5500, Y = 4500, W = 3000, H = 60 };
+        walls["L13-bot"]  = new Wall { Id = "L13-bot",  X = 5500, Y = 5500, W = 3000, H = 60 };
+        walls["L13-back"] = new Wall { Id = "L13-back", X = 4400, Y = 5000, W = 60,   H = 1000 };
+        doors[d] = new Door { Id = d, X = 5400, Y = 5000, W = 60, H = 1000, RequiredSwitchIds = [sw] };
+        // The block doubles as the "key" — sitting it on the pad holds the door open for itself? No: block stops when it's on the pad. Use a SECOND block as the weight, this block as the passer.
+        const string weight = "L13-weight", pass = "L13-pass";
+        blocks[weight] = new BlockState { Id = weight, X = 3500, Y = 5000, W = 180, H = 180, Mass = 4, StaticFriction = 0.4, Color = "#BA7517" };
+        blocks[pass]   = new BlockState { Id = pass,   X = 3500, Y = 6200, W = 140, H = 140, Mass = 2, StaticFriction = 0.2, Color = "#7F77DD" };
+        // Remove the unused single-block helper
+        blocks.TryRemove(b, out _);
+        goals["L13-goal"] = new GoalZone { Id = "L13-goal", X = 6500, Y = 5000, W = 400, H = 400, TargetBlockId = pass };
+        labels["L13-label"] = new WorldLabel { Id = "L13-label", X = 5000, Y = 2500, Title = "Level 13 — Door hold", Subtitle = "Park the weight. Door opens. Slide the other block through before time runs out." };
+    }
+
+    /// <summary>Level 14 — "Long thread". An extra-long L-shape; the gap is tighter than Level 3. Pure pivot puzzle.</summary>
+    private void SeedLevel14()
+    {
+        walls["L14-top"] = new Wall { Id = "L14-top", X = 5000, Y = 3200, W = 80, H = 4200 };
+        walls["L14-bot"] = new Wall { Id = "L14-bot", X = 5000, Y = 6800, W = 80, H = 4200 };
+
+        const string s = "L14-shape";
+        // Tighter L: outer 1200 × 1200, arm thickness 240. Gap is 600 between top and bot walls.
+        var horiz = new ShapePiece { LocalX = 480, LocalY = -240, HalfW = 480, HalfH = 120 };
+        var vert  = new ShapePiece { LocalX = -240, LocalY = 480, HalfW = 120, HalfH = 480 };
+        shapes[s] = new ShapeActor
+        {
+            Id = s, X = 3000, Y = 5000, Angle = 0,
+            Mass = 9, MomentOfInertia = 500_000, StaticFriction = 0.7, RotationalFriction = 70,
+            Color = "#D85A30",
+            Pieces = [horiz, vert],
+        };
+        shapeGoals["L14-goal"] = new ShapeGoal { Id = "L14-goal", X = 7200, Y = 5000, W = 2000, H = 2000, TargetShapeId = s };
+        labels["L14-label"] = new WorldLabel { Id = "L14-label", X = 5000, Y = 2000, Title = "Level 14 — Long thread", Subtitle = "A meaner L through a meaner gap. Patience and rotation." };
+    }
+
 
     // ── physics step (called by GameLoopService) ─────────────────────────────
 
@@ -582,6 +917,7 @@ public class RoomState
         }
 
         AdvanceTick();
+        TimeoutVoteIfExpired();
     }
 
     // ── compound-rigid-body step ─────────────────────────────────────────────
@@ -814,11 +1150,20 @@ public class RoomState
         foreach (var s in switches.Values)
         {
             var count = 0;
+            // Cursors count toward activation.
             foreach (var c in cursors.Values)
             {
                 if (c.X > s.X - s.W / 2 && c.X < s.X + s.W / 2 &&
                     c.Y > s.Y - s.H / 2 && c.Y < s.Y + s.H / 2)
                     count++;
+            }
+            // Blocks count too: any block whose AABB overlaps the switch's AABB activates it.
+            // This is what powers Level 2's "weight on the pressure pad opens the door"
+            // mechanic — a heavy block planted on the switch holds the door open without
+            // needing a cursor stationed there.
+            foreach (var b in blocks.Values)
+            {
+                if (AabbOverlap(b.X, b.Y, b.W, b.H, s.X, s.Y, s.W, s.H)) count++;
             }
             s.CursorsInside = count;
             s.IsActive = count >= s.RequiredCount;

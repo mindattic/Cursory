@@ -222,6 +222,42 @@ public class ShapeGoal
 }
 
 /// <summary>
+/// What a successful vote does when it passes. <see cref="Reset"/> re-seeds the currently
+/// loaded level; <see cref="SelectLevel"/> switches to <see cref="RoomVote.TargetLevel"/>.
+/// </summary>
+public enum VoteKind
+{
+    Reset = 0,
+    SelectLevel = 1,
+}
+
+/// <summary>
+/// A pending room vote. Any player can start one (via the Reset button or the level-select
+/// dropdown); every currently-connected player at vote-start is implicitly a voter; the
+/// action fires when YES votes reach a 2/3 majority of the voter snapshot. Vote times out
+/// (server-side) after <see cref="RoomVote.TimeoutTicks"/> if it can't gather the threshold.
+/// </summary>
+public class RoomVote
+{
+    /// <summary>What this vote does on pass.</summary>
+    public VoteKind Kind { get; set; }
+    /// <summary>For <see cref="VoteKind.SelectLevel"/>, the level number to load (1..N).</summary>
+    public int TargetLevel { get; set; }
+    /// <summary>Server tick when the vote was started.</summary>
+    public long StartedAtTick { get; set; }
+    /// <summary>User who initiated the vote (auto-counted as a YES).</summary>
+    public string StartedByUserId { get; set; } = "";
+    /// <summary>Snapshot of the player roster at vote-start; new arrivals can't vote on this round.</summary>
+    public List<string> Voters { get; set; } = [];
+    public List<string> YesUserIds { get; set; } = [];
+    public List<string> NoUserIds { get; set; } = [];
+    /// <summary>YES votes required to pass — ceil(2/3 × Voters.Count).</summary>
+    public int Quorum { get; set; }
+    /// <summary>Server-side timeout, in ticks. At 30 Hz, 450 ticks = 15 s.</summary>
+    public const int TimeoutTicks = 450;
+}
+
+/// <summary>
 /// Authoritative world snapshot broadcast to every connected client at the tick rate.
 /// Carries only state that actually changes from tick to tick. Static geometry (walls,
 /// labels) is delivered once via <see cref="WorldGeometryMessage"/>.
@@ -237,6 +273,12 @@ public class WorldSnapshot
     public List<ShapeActor> Shapes { get; set; } = [];
     public List<ShapeGoal> ShapeGoals { get; set; } = [];
     public List<Whistle> Whistles { get; set; } = [];
+    /// <summary>The active room vote (reset or level-switch), if any. Null when none.</summary>
+    public RoomVote? Vote { get; set; }
+    /// <summary>Which level is currently loaded (1, 2, 3 …).</summary>
+    public int CurrentLevel { get; set; }
+    /// <summary>How many levels exist; the UI dropdown is built from this.</summary>
+    public int LevelCount { get; set; }
 }
 
 /// <summary>
