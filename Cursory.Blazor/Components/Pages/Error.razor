@@ -1,0 +1,29 @@
+@page "/Error"
+@layout Layout.MainLayout
+@using System.Diagnostics
+@attribute [Microsoft.AspNetCore.Authorization.AllowAnonymous]
+
+<PageTitle>Error · Cursory</PageTitle>
+
+<div class="login-shell">
+    <div class="login-card">
+        <h1>Something went wrong</h1>
+        <p class="login-sub">An unexpected error occurred. Try signing in again.</p>
+        @if (!string.IsNullOrEmpty(RequestId))
+        {
+            <div class="login-sub">Request <code>@RequestId</code></div>
+        }
+        <a href="/" style="color:#7F77DD; text-decoration:none;">← Back to the room</a>
+    </div>
+</div>
+
+@code {
+    private string? RequestId;
+
+    [CascadingParameter] private HttpContext? HttpContext { get; set; }
+
+    protected override void OnInitialized()
+    {
+        RequestId = Activity.Current?.Id ?? HttpContext?.TraceIdentifier;
+    }
+}

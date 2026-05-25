@@ -165,6 +165,9 @@ function render(now) {
 
     drawGrid();
     drawGoals();
+    drawSwitches();
+    drawWalls();
+    drawDoors();
     drawBlocks();
     drawAttachLines();
     drawCursors();
@@ -210,6 +213,60 @@ function drawBlocks() {
         ctx.lineWidth = 2;
         ctx.fillRect(b.x - b.w / 2, b.y - b.h / 2, b.w, b.h);
         ctx.strokeRect(b.x - b.w / 2, b.y - b.h / 2, b.w, b.h);
+    }
+}
+
+function drawWalls() {
+    for (const w of state.snapshot.walls || []) {
+        ctx.fillStyle = '#2a2a2a';
+        ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+        ctx.lineWidth = 2;
+        ctx.fillRect(w.x - w.w / 2, w.y - w.h / 2, w.w, w.h);
+        ctx.strokeRect(w.x - w.w / 2, w.y - w.h / 2, w.w, w.h);
+    }
+}
+
+function drawDoors() {
+    for (const d of state.snapshot.doors || []) {
+        if (d.isOpen) {
+            ctx.fillStyle = 'rgba(29,158,117,0.15)';
+            ctx.strokeStyle = 'rgba(29,158,117,0.7)';
+            ctx.setLineDash([10, 8]);
+        } else {
+            ctx.fillStyle = '#5a2e22';
+            ctx.strokeStyle = 'rgba(216,90,48,0.9)';
+            ctx.setLineDash([]);
+        }
+        ctx.lineWidth = 3;
+        ctx.fillRect(d.x - d.w / 2, d.y - d.h / 2, d.w, d.h);
+        ctx.strokeRect(d.x - d.w / 2, d.y - d.h / 2, d.w, d.h);
+        ctx.setLineDash([]);
+    }
+}
+
+function drawSwitches() {
+    for (const s of state.snapshot.switches || []) {
+        const cx = s.x, cy = s.y;
+        const r = Math.min(s.w, s.h) / 2 - 8;
+        // Pad outline
+        ctx.strokeStyle = withAlpha(s.color, s.isActive ? 1 : 0.5);
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, 0, Math.PI * 2);
+        ctx.stroke();
+        // Fill when active
+        if (s.isActive) {
+            ctx.fillStyle = withAlpha(s.color, 0.35);
+            ctx.beginPath();
+            ctx.arc(cx, cy, r - 4, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        // Required-count indicator (e.g. "1/2" cursors inside)
+        ctx.fillStyle = 'rgba(255,255,255,0.85)';
+        ctx.font = '20px system-ui';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(`${s.cursorsInside}/${s.requiredCount}`, cx, cy);
     }
 }
 

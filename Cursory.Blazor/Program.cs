@@ -3,6 +3,7 @@ using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.RateLimiting;
 using Cursory.Blazor.Components;
 using Cursory.Blazor.Hubs;
@@ -93,6 +94,19 @@ using (var scope = app.Services.CreateScope())
     auth.SeedUser("GunGreenEyes", "GunGreenEyes", "Happygirl1005", UserRoles.Player, "#D85A30");
     auth.SeedUser("GideonKain",   "GideonKain",   "Happygirl1005", UserRoles.Player, "#378ADD");
 }
+
+// Azure App Service terminates TLS at the load balancer and forwards as HTTP with
+// X-Forwarded-Proto. Honour the header so UseHttpsRedirection / Secure cookies see
+// the original scheme. Has to run before authentication.
+var forwardedOptions = new ForwardedHeadersOptions
+{
+    ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto,
+};
+// Azure App Service sits behind a load balancer outside the loopback range, so trust
+// any proxy. The default loopback-only allowlist would drop the header in production.
+forwardedOptions.KnownIPNetworks.Clear();
+forwardedOptions.KnownProxies.Clear();
+app.UseForwardedHeaders(forwardedOptions);
 
 if (!app.Environment.IsDevelopment())
 {

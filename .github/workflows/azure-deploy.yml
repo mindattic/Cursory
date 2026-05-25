@@ -1,0 +1,60 @@
+name: Build and deploy Cursory to Azure App Service
+
+# Two-stage pipeline mirrored on the MindAttic StreetSamurai deploy:
+#   build   — restore + publish the Cursory.Blazor host as a deployable artifact
+#   deploy  — push the artifact to the `cursory` App Service slot
+#
+# Prerequisites (set these up before flipping the deploy on):
+#   1. Provision an Azure App Service named `cursory` (Linux or Windows, .NET 10 runtime).
+#   2. Add the repo secret `AZURE_WEBAPP_PUBLISH_PROFILE` (download from the App Service
+#      → Get publish profile in the Azure portal).
+#   3. Flip `MindAttic.Deploy/projects.json → apps[]`'s `cursory` entry to `disabled: false`.
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.x'
+
+      - name: Restore dependencies
+        run: dotnet restore Cursory.Blazor/Cursory.Blazor.csproj
+
+      - name: Publish
+        run: dotnet publish Cursory.Blazor/Cursory.Blazor.csproj -c Release -o publish --no-restore
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cursory-app
+          path: publish/
+
+  deploy:
+    runs-on: windows-latest
+    needs: build
+
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: cursory-app
+          path: publish/
+
+      - name: Deploy to Azure App Service
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: cursory
+          slot-name: Production
+          package: publish/
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}

@@ -2,4 +2,5 @@
   <Project Path="Cursory.Core/Cursory.Core.csproj" />
   <Project Path="Cursory.Shared/Cursory.Shared.csproj" />
   <Project Path="Cursory.Blazor/Cursory.Blazor.csproj" />
+  <Project Path="Cursory.Tests/Cursory.Tests.csproj" />
 </Solution>
