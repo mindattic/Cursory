@@ -119,6 +119,28 @@ public class AuthService
         users.Add(user);
     }
 
+    /// <summary>
+    /// Force every stored account's password to <paramref name="password"/>, bypassing the
+    /// password policy. Idempotent: an account whose hash already verifies is skipped, so on
+    /// the steady state (everyone already on this password) it writes nothing. Re-hashed
+    /// accounts get a fresh security stamp, dropping any live session. Returns the number of
+    /// accounts changed. Operator action — there is no self-service signup, so this is the
+    /// only way accounts get a password besides <see cref="SeedUser"/>.
+    /// </summary>
+    public int SetAllPasswords(string password)
+    {
+        var changed = 0;
+        foreach (var user in users.GetAll())
+        {
+            if (BCrypt.Net.BCrypt.Verify(password, user.PasswordHash)) continue;
+            user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(password, BcryptWorkFactor);
+            user.SecurityStamp = Guid.NewGuid().ToString();
+            users.Update(user);
+            changed++;
+        }
+        return changed;
+    }
+
     public UserAccount CreateUser(string username, string displayName, string password, string role, string color)
     {
         ValidateUsername(username);

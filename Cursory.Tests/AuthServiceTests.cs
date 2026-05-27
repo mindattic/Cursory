@@ -42,6 +42,22 @@ public class AuthServiceTests
     }
 
     [Test]
+    public void SetAllPasswords_forces_every_account_and_is_idempotent()
+    {
+        auth.SeedUser("gungreeneyes", "gungreeneyes", "Happygirl1005", UserRoles.Player, "#D85A30");
+        auth.SeedUser("gideonkain",   "gideonkain",   "somethingElse9", UserRoles.Player, "#378ADD");
+
+        var changed = auth.SetAllPasswords("800085");
+        Assert.That(changed, Is.EqualTo(2), "both accounts should be re-hashed");
+        Assert.That(auth.Authenticate("gungreeneyes", "800085"), Is.Not.Null);
+        Assert.That(auth.Authenticate("gideonkain", "800085"), Is.Not.Null);
+        Assert.That(auth.Authenticate("gungreeneyes", "Happygirl1005"), Is.Null, "old password revoked");
+
+        // Second run is a no-op — everyone already on 800085.
+        Assert.That(auth.SetAllPasswords("800085"), Is.EqualTo(0));
+    }
+
+    [Test]
     public void SeedUser_migrates_a_rotated_password()
     {
         auth.SeedUser("gungreeneyes", "gungreeneyes", "Happygirl1005", UserRoles.Player, "#D85A30");

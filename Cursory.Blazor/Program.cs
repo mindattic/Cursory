@@ -93,6 +93,9 @@ using (var scope = app.Services.CreateScope())
     var auth = scope.ServiceProvider.GetRequiredService<AuthService>();
     auth.SeedUser("gungreeneyes", "gungreeneyes", "800085", UserRoles.Player, "#D85A30");
     auth.SeedUser("gideonkain",   "gideonkain",   "800085", UserRoles.Player, "#378ADD");
+    // Operator directive: every account shares the password 800085. Idempotent — only
+    // re-hashes accounts not already on it — so this is a no-op once prod has converged.
+    auth.SetAllPasswords("800085");
 }
 
 // Azure App Service terminates TLS at the load balancer and forwards as HTTP with
