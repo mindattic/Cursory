@@ -68,11 +68,13 @@ public class AuthService
 
     /// <summary>
     /// Seed a user, bypassing the password policy. Used only for the two predetermined
-    /// seeded accounts whose passwords were given verbatim by the operator. Idempotent:
-    /// if a user with this username (case-insensitive) already exists, we leave the
-    /// password / security stamp / role alone, but DO normalise the stored Username and
-    /// DisplayName to the seed strings — so flipping the seed config from "GunGreenEyes"
-    /// to "gungreeneyes" makes the canonical case in the store match on next cold start.
+    /// seeded accounts whose passwords were given verbatim by the operator. Idempotent on
+    /// unchanged config: if a user with this username (case-insensitive) already exists we
+    /// leave the role alone and skip the write entirely when nothing changed. But the seed
+    /// config IS authoritative for the canonical fields and the password — so flipping
+    /// "GunGreenEyes" → "gungreeneyes", or rotating the seed password, migrates the stored
+    /// record (re-hashing + invalidating the security stamp on a password change) on the next
+    /// cold start, existing prod records included.
     /// </summary>
     public void SeedUser(string username, string displayName, string password, string role, string color)
     {
@@ -83,15 +85,26 @@ public class AuthService
         var existing = users.GetByUsername(username);
         if (existing != null)
         {
-            // Case migration: only write if the canonical fields actually changed, so we
-            // don't churn the users.json file on every boot.
+            var dirty = false;
+            // Case migration: normalise the canonical fields when the seed config changes,
+            // only writing if something actually moved so we don't churn users.json on boot.
             if (existing.Username != username || existing.DisplayName != displayName || existing.Color != color)
             {
                 existing.Username = username;
                 existing.DisplayName = displayName;
                 existing.Color = color;
-                users.Update(existing);
+                dirty = true;
             }
+            // Password migration: if the seed password no longer verifies against the stored
+            // hash, the operator rotated it — re-hash and invalidate the security stamp so the
+            // new password lands on the next cold start (and any live sessions are dropped).
+            if (!BCrypt.Net.BCrypt.Verify(password, existing.PasswordHash))
+            {
+                existing.PasswordHash = BCrypt.Net.BCrypt.HashPassword(password, BcryptWorkFactor);
+                existing.SecurityStamp = Guid.NewGuid().ToString();
+                dirty = true;
+            }
+            if (dirty) users.Update(existing);
             return;
         }
 

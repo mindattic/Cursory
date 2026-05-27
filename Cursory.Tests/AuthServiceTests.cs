@@ -32,14 +32,24 @@ public class AuthServiceTests
     }
 
     [Test]
-    public void SeedUser_is_idempotent()
+    public void SeedUser_is_idempotent_on_unchanged_config()
     {
         auth.SeedUser("gungreeneyes", "gungreeneyes", "Happygirl1005", UserRoles.Player, "#D85A30");
-        auth.SeedUser("gungreeneyes", "gungreeneyes", "different",     UserRoles.Player, "#D85A30");
+        auth.SeedUser("gungreeneyes", "gungreeneyes", "Happygirl1005", UserRoles.Player, "#D85A30");
         Assert.That(repo.Count, Is.EqualTo(1));
-        // The second SeedUser must NOT overwrite the password.
-        var user = auth.Authenticate("gungreeneyes", "Happygirl1005");
-        Assert.That(user, Is.Not.Null);
+        // Re-seeding with the same config is a no-op — the password still works.
+        Assert.That(auth.Authenticate("gungreeneyes", "Happygirl1005"), Is.Not.Null);
+    }
+
+    [Test]
+    public void SeedUser_migrates_a_rotated_password()
+    {
+        auth.SeedUser("gungreeneyes", "gungreeneyes", "Happygirl1005", UserRoles.Player, "#D85A30");
+        // Operator rotates the seed password. On the next seed the stored hash is updated.
+        auth.SeedUser("gungreeneyes", "gungreeneyes", "800085", UserRoles.Player, "#D85A30");
+        Assert.That(repo.Count, Is.EqualTo(1));
+        Assert.That(auth.Authenticate("gungreeneyes", "800085"), Is.Not.Null, "new password should work");
+        Assert.That(auth.Authenticate("gungreeneyes", "Happygirl1005"), Is.Null, "old password should be revoked");
     }
 
     [Test]
