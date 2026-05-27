@@ -309,10 +309,28 @@ function drawBlocks() {
         ctx.fillStyle = b.color || '#3a3a3a';
         ctx.strokeStyle = 'rgba(255,255,255,0.2)';
         ctx.lineWidth = 2;
-        ctx.fillRect(b.x - b.w / 2, b.y - b.h / 2, b.w, b.h);
-        ctx.strokeRect(b.x - b.w / 2, b.y - b.h / 2, b.w, b.h);
+        // Blocks are real rigid bodies now — draw them in their own rotated frame.
+        ctx.save();
+        ctx.translate(b.x, b.y);
+        ctx.rotate(b.angle || 0);
+        ctx.fillRect(-b.w / 2, -b.h / 2, b.w, b.h);
+        ctx.strokeRect(-b.w / 2, -b.h / 2, b.w, b.h);
+        ctx.restore();
     }
 }
+
+// World position of a cursor's grab anchor on a (rotated) block.
+function blockAnchorWorld(b, c) {
+    const cos = Math.cos(b.angle || 0), sin = Math.sin(b.angle || 0);
+    return [
+        b.x + c.anchorLocalX * cos - c.anchorLocalY * sin,
+        b.y + c.anchorLocalX * sin + c.anchorLocalY * cos,
+    ];
+}
+
+// The rendered pull line stops at the distance where a grab hits its max force, so a
+// player can read how hard they're pulling: past MAX_PULL_PX, pulling farther adds no force.
+const MAX_PULL_PX = 240;
 
 function drawWalls() {
     for (const w of state.geometry.walls) {
@@ -376,17 +394,31 @@ function drawAttachLines() {
         if (!c.attachedBlockId) continue;
         const b = blockById.get(c.attachedBlockId);
         if (!b) continue;
-        const ax = b.x + c.anchorLocalX, ay = b.y + c.anchorLocalY;
-        ctx.strokeStyle = withAlpha(c.color, 0.7);
-        ctx.lineWidth = 2;
+        const [ax, ay] = blockAnchorWorld(b, c);
+        // Truncate the line at the max-force reach. The full segment would run anchor → cursor;
+        // we draw at most MAX_PULL_PX of it so an over-stretched pull reads as "maxed out".
+        const dx = c.x - ax, dy = c.y - ay;
+        const dist = Math.hypot(dx, dy) || 1;
+        const reach = Math.min(dist, MAX_PULL_PX);
+        const ex = ax + (dx / dist) * reach, ey = ay + (dy / dist) * reach;
+        const maxed = dist > MAX_PULL_PX;
+        ctx.strokeStyle = withAlpha(c.color, maxed ? 1 : 0.7);
+        ctx.lineWidth = maxed ? 3 : 2;
         ctx.beginPath();
         ctx.moveTo(ax, ay);
-        ctx.lineTo(c.x, c.y);
+        ctx.lineTo(ex, ey);
         ctx.stroke();
+        // Anchor dot.
         ctx.fillStyle = c.color;
         ctx.beginPath();
         ctx.arc(ax, ay, 4, 0, Math.PI * 2);
         ctx.fill();
+        // Max-reach cap marker when the player is pulling at full force.
+        if (maxed) {
+            ctx.beginPath();
+            ctx.arc(ex, ey, 5, 0, Math.PI * 2);
+            ctx.stroke();
+        }
     }
 }
 
@@ -405,7 +437,7 @@ function drawCursors() {
         if (c.attachedBlockId) {
             const b = blockById.get(c.attachedBlockId);
             if (b) {
-                const ax = b.x + c.anchorLocalX, ay = b.y + c.anchorLocalY;
+                const [ax, ay] = blockAnchorWorld(b, c);
                 rot = Math.atan2(ay - c.y, ax - c.x);
             }
         } else if (c.attachedShapeId) {
@@ -576,9 +608,14 @@ function pickShape(wx, wy) {
 }
 
 function pickBlock(wx, wy) {
+    // Blocks rotate now, so inverse-rotate the click into the block's body frame before the
+    // AABB test (same trick as pickShape).
     for (const b of state.snapshot.blocks || []) {
-        if (wx > b.x - b.w / 2 && wx < b.x + b.w / 2 &&
-            wy > b.y - b.h / 2 && wy < b.y + b.h / 2) return b;
+        const cos = Math.cos(-(b.angle || 0)), sin = Math.sin(-(b.angle || 0));
+        const dx = wx - b.x, dy = wy - b.y;
+        const lx = dx * cos - dy * sin;
+        const ly = dx * sin + dy * cos;
+        if (lx > -b.w / 2 && lx < b.w / 2 && ly > -b.h / 2 && ly < b.h / 2) return b;
     }
     return null;
 }

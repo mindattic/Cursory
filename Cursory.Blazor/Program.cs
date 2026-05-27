@@ -91,8 +91,8 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var auth = scope.ServiceProvider.GetRequiredService<AuthService>();
-    auth.SeedUser("gungreeneyes", "gungreeneyes", "Happygirl1005", UserRoles.Player, "#D85A30");
-    auth.SeedUser("gideonkain",   "gideonkain",   "Happygirl1005", UserRoles.Player, "#378ADD");
+    auth.SeedUser("gungreeneyes", "gungreeneyes", "800085", UserRoles.Player, "#D85A30");
+    auth.SeedUser("gideonkain",   "gideonkain",   "800085", UserRoles.Player, "#378ADD");
 }
 
 // Azure App Service terminates TLS at the load balancer and forwards as HTTP with

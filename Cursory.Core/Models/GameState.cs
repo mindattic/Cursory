@@ -43,8 +43,12 @@ public class BlockState
     public double H { get; set; }
     public double Vx { get; set; }
     public double Vy { get; set; }
+    /// <summary>Body-frame rotation in radians, anti-clockwise from world x-axis. Real
+    /// rigid bodies rotate when cursors pull at different corners; the client renders this.</summary>
+    public double Angle { get; set; }
     public double Mass { get; set; } = 6;
-    /// <summary>Static-friction threshold in force units. Net cursor force must exceed this to move.</summary>
+    /// <summary>Friction magnitude. Seeds the body's FrictionJoint MaxForce (top-down dry
+    /// friction): a grab whose force ceiling is below this can't move the body alone.</summary>
     public double StaticFriction { get; set; } = 1.2;
     public string Color { get; set; } = "#3a3a3a";
 }

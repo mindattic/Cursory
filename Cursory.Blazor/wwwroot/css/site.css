@@ -231,9 +231,12 @@ html, body {
     overflow: hidden;
     background: #0c0c0c;
     position: relative;
-    cursor: grab;
+    /* Hide the OS hardware cursor inside the room — the canvas renders the
+       player's own cursor (drawCursors, isMe), so showing both would be
+       confusing. The rendered cursor is the only pointer in the room. */
+    cursor: none;
 }
-.room-viewport.dragging { cursor: grabbing; }
+.room-viewport.dragging { cursor: none; }
 #room-canvas {
     display: block;
     width: 100%;

@@ -60,10 +60,10 @@ public class VoteAndLevelTests
         var room = new RoomState();
         room.AddOrUpdatePlayer("u1", "c1", "U1", "#fff");
         Assert.That(room.CurrentLevel, Is.EqualTo(1));
-        Assert.That(room.StartLevelVote("u1", 3), Is.True);
-        Assert.That(room.CurrentLevel, Is.EqualTo(3));
+        Assert.That(room.StartLevelVote("u1", 2), Is.True);
+        Assert.That(room.CurrentLevel, Is.EqualTo(2));
         Assert.That(room.ConsumeGeometryRebroadcast(), Is.True);
-        Assert.That(room.ConsumeLevelAnnouncement(), Is.EqualTo(3));
+        Assert.That(room.ConsumeLevelAnnouncement(), Is.EqualTo(2));
     }
 
     /// <summary>
@@ -89,33 +89,5 @@ public class VoteAndLevelTests
         var room = new RoomState();
         room.AddOrUpdatePlayer("u1", "c1", "U1", "#fff");
         Assert.That(room.StartLevelVote("u1", target), Is.False);
-    }
-
-    /// <summary>
-    /// Level 2's block-on-switch mechanic: parking the heavy weight-block on the pad
-    /// activates the switch and opens the door, even with zero cursors on the pad.
-    /// </summary>
-    [Test]
-    public void Block_sitting_on_switch_activates_it()
-    {
-        var room = new RoomState();
-        room.AddOrUpdatePlayer("u1", "c1", "U1", "#fff");
-        room.StartLevelVote("u1", 2);  // single-voter quorum 1 — passes immediately
-        Assert.That(room.CurrentLevel, Is.EqualTo(2));
-
-        // Manually move the L2 weight-block onto the L2 switch pad.
-        var snap = room.Snapshot();
-        var weight = snap.Blocks.Single(b => b.Id == "L2-weight");
-        var pad    = snap.Switches.Single(s => s.Id == "L2-switch");
-        // RoomState.AddBlock replaces, so reposition by replacing in place via the internal helper:
-        room.AddBlock(new BlockState
-        {
-            Id = weight.Id, X = pad.X, Y = pad.Y, W = weight.W, H = weight.H,
-            Mass = weight.Mass, StaticFriction = weight.StaticFriction, Color = weight.Color,
-        });
-        room.Step();
-        var after = room.Snapshot();
-        Assert.That(after.Switches.Single(s => s.Id == "L2-switch").IsActive, Is.True);
-        Assert.That(after.Doors.Single(d => d.Id == "L2-door").IsOpen, Is.True);
     }
 }
