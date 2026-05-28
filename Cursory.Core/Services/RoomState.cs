@@ -17,9 +17,10 @@ namespace Cursory.Core.Services;
 /// <item>Each draggable block is a dynamic body. A <see cref="FrictionJoint"/> to a static
 /// ground body gives it top-down dry friction (MaxForce / MaxTorque) — this is what makes a
 /// body "too heavy for one cursor".</item>
-/// <item>Grabbing a block creates a <see cref="FixedMouseJoint"/> whose body anchor snaps to
-/// the nearest corner and whose pull force is capped at <see cref="GrabMaxForce"/>. Two grabs =
-/// two joints, so cooperative drag, fulcrum-pivots, and torque fall straight out of the solver.</item>
+/// <item>Grabbing a block creates a <see cref="FixedMouseJoint"/> whose body anchor is the
+/// point under the cursor (clamped to the body) and whose pull force is capped at
+/// <see cref="GrabMaxForce"/>. Two grabs = two joints, so cooperative drag, fulcrum-pivots,
+/// and torque fall straight out of the solver.</item>
 /// </list>
 /// The engine works in metres; the wire format stays in world pixels. We scale at the boundary
 /// (<see cref="PixelsPerMeter"/>). All engine access is serialised under <see cref="worldLock"/>
@@ -158,9 +159,9 @@ public class RoomState
     private static bool IsFinite(double v) => !double.IsNaN(v) && !double.IsInfinity(v);
 
     /// <summary>
-    /// Grab a block. The anchor snaps to the block's nearest corner (vertex); a capped-force
-    /// <see cref="FixedMouseJoint"/> then pulls that corner toward the cursor each tick. The
-    /// cursor's stored anchor (body-local) lets the client draw the pull line.
+    /// Grab a block at the point under the cursor (clamped to the body, not snapped to a
+    /// corner). A capped-force <see cref="FixedMouseJoint"/> then pulls that point toward the
+    /// cursor each tick; the cursor's stored body-local anchor lets the client draw the pull line.
     /// </summary>
     public bool TryAttach(string userId, string blockId, double clickX, double clickY)
     {
@@ -173,10 +174,25 @@ public class RoomState
 
             DetachLocked(userId);
 
-            // Nearest corner in world space, given the body's current pose.
-            var (cornerWX, cornerWY) = NearestCorner(b, clickX, clickY);
+            // Anchor at the point on the body directly under the cursor tip — un-rotate the
+            // click into the body frame and clamp it to the block's extent. Grabbing where you
+            // actually clicked (rather than snapping to the nearest corner) is what makes the
+            // torque interesting: an edge or off-centre pull pivots the body the way you'd
+            // expect, instead of every grab behaving like a corner handle.
+            var dx = clickX - b.X;
+            var dy = clickY - b.Y;
+            var cosN = Math.Cos(-b.Angle);
+            var sinN = Math.Sin(-b.Angle);
+            var localX = Math.Clamp(dx * cosN - dy * sinN, -b.W / 2, b.W / 2);
+            var localY = Math.Clamp(dx * sinN + dy * cosN, -b.H / 2, b.H / 2);
 
-            var joint = new FixedMouseJoint(body, ToMVec(cornerWX, cornerWY))
+            // Rotate the (clamped) local anchor back into world space for the joint.
+            var cosP = Math.Cos(b.Angle);
+            var sinP = Math.Sin(b.Angle);
+            var anchorWX = b.X + localX * cosP - localY * sinP;
+            var anchorWY = b.Y + localX * sinP + localY * cosP;
+
+            var joint = new FixedMouseJoint(body, ToMVec(anchorWX, anchorWY))
             {
                 MaxForce = GrabMaxForce,
                 Frequency = GrabFrequency,
@@ -186,15 +202,10 @@ public class RoomState
             world.Add(joint);
             grabByUser[userId] = joint;
 
-            // Body-local anchor (un-rotate the corner about the body centre) for the client.
-            var dx = cornerWX - b.X;
-            var dy = cornerWY - b.Y;
-            var cos = Math.Cos(-b.Angle);
-            var sin = Math.Sin(-b.Angle);
             c.AttachedBlockId = blockId;
             c.AttachedShapeId = null;
-            c.AnchorLocalX = dx * cos - dy * sin;
-            c.AnchorLocalY = dx * sin + dy * cos;
+            c.AnchorLocalX = localX;
+            c.AnchorLocalY = localY;
             return true;
         }
     }
@@ -218,31 +229,6 @@ public class RoomState
             c.AttachedBlockId = null;
             c.AttachedShapeId = null;
         }
-    }
-
-    /// <summary>The four world-space corners of a (possibly rotated) block, and the nearest of
-    /// them to the given world point.</summary>
-    private static (double X, double Y) NearestCorner(BlockState b, double px, double py)
-    {
-        var cos = Math.Cos(b.Angle);
-        var sin = Math.Sin(b.Angle);
-        var hw = b.W / 2;
-        var hh = b.H / 2;
-        Span<(double x, double y)> local =
-        [
-            (-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh),
-        ];
-        var bestX = b.X;
-        var bestY = b.Y;
-        var bestD = double.PositiveInfinity;
-        foreach (var (lx, ly) in local)
-        {
-            var wx = b.X + lx * cos - ly * sin;
-            var wy = b.Y + lx * sin + ly * cos;
-            var d = (wx - px) * (wx - px) + (wy - py) * (wy - py);
-            if (d < bestD) { bestD = d; bestX = wx; bestY = wy; }
-        }
-        return (bestX, bestY);
     }
 
     // ── votes ──────────────────────────────────────────────────────────────

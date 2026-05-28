@@ -20,20 +20,35 @@ public class RoomStateTests
         Id = id, X = CX, Y = CY, W = size, H = size, Mass = mass, StaticFriction = friction,
     };
 
-    /// <summary>A grab snaps its anchor to the block's nearest corner, not the raw click point.</summary>
+    /// <summary>A grab anchors at the point under the cursor (clamped to the body), not a corner —
+    /// off-centre, non-corner grabs are what give the body interesting torque.</summary>
     [Test]
-    public void Grab_snaps_anchor_to_nearest_corner()
+    public void Grab_anchors_at_click_point()
     {
         var room = new RoomState();
         room.AddTestCursor("u1", CX, CY);
         room.AddBlock(Block("b", mass: 4, friction: 0.4, size: 260));   // corners at ±130
-        // Click just inside the top-right corner.
+        // Click off-centre but well inside the block — not at a corner.
         room.TryAttach("u1", "b", CX + 110, CY - 100);
 
         var c = room.GetCursor("u1")!;
         Assert.That(c.AttachedBlockId, Is.EqualTo("b"));
-        Assert.That(c.AnchorLocalX, Is.EqualTo(130).Within(1.0), "anchor X should snap to +half-width");
-        Assert.That(c.AnchorLocalY, Is.EqualTo(-130).Within(1.0), "anchor Y should snap to -half-height");
+        Assert.That(c.AnchorLocalX, Is.EqualTo(110).Within(1.0), "anchor X should track the click point");
+        Assert.That(c.AnchorLocalY, Is.EqualTo(-100).Within(1.0), "anchor Y should track the click point");
+    }
+
+    /// <summary>A grab beyond the block's edge clamps to the body rather than anchoring in space.</summary>
+    [Test]
+    public void Grab_clamps_anchor_to_body()
+    {
+        var room = new RoomState();
+        room.AddTestCursor("u1", CX, CY);
+        room.AddBlock(Block("b", mass: 4, friction: 0.4, size: 260));   // half-extent 130
+        room.TryAttach("u1", "b", CX + 500, CY + 500);                  // way outside
+
+        var c = room.GetCursor("u1")!;
+        Assert.That(c.AnchorLocalX, Is.EqualTo(130).Within(1.0), "anchor X clamps to +half-width");
+        Assert.That(c.AnchorLocalY, Is.EqualTo(130).Within(1.0), "anchor Y clamps to +half-height");
     }
 
     /// <summary>A light, low-friction block can be dragged by a single cursor (the Level 1 feel).</summary>
@@ -142,10 +157,16 @@ public class RoomStateTests
 
         room.Detach("u1");
         Assert.That(room.GetCursor("u1")!.AttachedBlockId, Is.Null);
-        var afterX = b.X;
+
+        // Yank the cursor far in a brand-new direction (perpendicular to the original drag). A
+        // still-attached spring would haul the block after it in Y; a released one won't — the
+        // block only coasts out its existing X-momentum, so its Y barely changes.
+        var afterY = b.Y;
+        room.GetCursor("u1")!.X = CX;
+        room.GetCursor("u1")!.Y = CY + 3000;
         for (var i = 0; i < 120; i++) room.Step();
-        // With damping + friction the released body coasts to a near-stop, not off to the cursor.
-        Assert.That(b.X - afterX, Is.LessThan(200), $"released block kept accelerating: delta={b.X - afterX}");
+        Assert.That(Math.Abs(b.Y - afterY), Is.LessThan(60),
+            $"released block followed the cursor in Y: delta={b.Y - afterY}");
     }
 
     /// <summary>NaN / infinite cursor input must not poison the simulation.</summary>

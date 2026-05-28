@@ -599,30 +599,71 @@ function drawMinimap() {
     const mw = 160, mh = 160 * (H / W);
     const pad = 12;
     const mx = canvas.width - mw - pad, my = canvas.height - mh - pad;
+    const sx = mw / W, sy = mh / H;
+    // World point → minimap point.
+    const px = (wx) => mx + wx * sx;
+    const py = (wy) => my + wy * sy;
+    // World rect (centre x/y, size w/h) → minimap rect, with a 2-px floor so small geometry
+    // doesn't vanish at this scale.
+    const fillCentred = (x, y, w, h) => ctx.fillRect(
+        px(x - w / 2), py(y - h / 2), Math.max(2, w * sx), Math.max(2, h * sy));
+
     ctx.fillStyle = 'rgba(0,0,0,0.5)';
     ctx.strokeStyle = 'rgba(255,255,255,0.2)';
     ctx.lineWidth = 1;
     ctx.fillRect(mx, my, mw, mh);
     ctx.strokeRect(mx, my, mw, mh);
-    // Viewport rect
-    const z = state.cam.z;
-    const vw = (canvas.width / z) / W * mw;
-    const vh = (canvas.height / z) / H * mh;
-    const vx = mx + (state.cam.x - canvas.width / (2 * z)) / W * mw;
-    const vy = my + (state.cam.y - canvas.height / (2 * z)) / H * mh;
-    // Clamp the viewport rect to the minimap bounds — when zoomed all the way out the view is
-    // wider than the world, so the raw rect would spill outside the 160-px minimap box.
-    const cx0 = Math.max(mx, vx), cy0 = Math.max(my, vy);
-    const cx1 = Math.min(mx + mw, vx + vw), cy1 = Math.min(my + mh, vy + vh);
-    if (cx1 > cx0 && cy1 > cy0) {
-        ctx.strokeStyle = 'rgba(255,255,255,0.5)';
-        ctx.strokeRect(cx0, cy0, cx1 - cx0, cy1 - cy0);
+
+    // Clip everything below to the minimap box so nothing bleeds outside it.
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(mx, my, mw, mh);
+    ctx.clip();
+
+    // Goals (block + shape) as targets — green once solved, faint accent otherwise.
+    for (const g of state.snapshot.goals || []) {
+        ctx.fillStyle = g.isSolved ? 'rgba(29,158,117,0.8)' : 'rgba(127,119,221,0.5)';
+        fillCentred(g.x, g.y, g.w, g.h);
     }
-    // Cursors as dots
+    for (const g of state.snapshot.shapeGoals || []) {
+        ctx.fillStyle = g.isSolved ? 'rgba(29,158,117,0.8)' : 'rgba(216,90,48,0.4)';
+        fillCentred(g.x, g.y, g.w, g.h);
+    }
+    // Walls.
+    ctx.fillStyle = 'rgba(170,170,170,0.8)';
+    for (const w of state.geometry.walls) fillCentred(w.x, w.y, w.w, w.h);
+    // Doors — coloured by open/closed.
+    for (const d of state.snapshot.doors || []) {
+        ctx.fillStyle = d.isOpen ? 'rgba(29,158,117,0.6)' : 'rgba(216,90,48,0.9)';
+        fillCentred(d.x, d.y, d.w, d.h);
+    }
+    // Blocks.
+    for (const b of state.snapshot.blocks || []) {
+        ctx.fillStyle = b.color || '#888';
+        fillCentred(b.x, b.y, b.w, b.h);
+    }
+    // Compound shapes — drop a dot at each body centre (pieces are tiny at minimap scale).
+    for (const s of state.snapshot.shapes || []) {
+        ctx.fillStyle = s.color || '#D85A30';
+        ctx.fillRect(px(s.x) - 2, py(s.y) - 2, 4, 4);
+    }
+
+    // Viewport rect (clamped by the clip above).
+    const z = state.cam.z;
+    const vw = (canvas.width / z) * sx;
+    const vh = (canvas.height / z) * sy;
+    const vx = px(state.cam.x - canvas.width / (2 * z));
+    const vy = py(state.cam.y - canvas.height / (2 * z));
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(vx, vy, vw, vh);
+
+    // Cursors as dots, on top.
     for (const c of state.snapshot.cursors || []) {
         ctx.fillStyle = c.color;
-        ctx.fillRect(mx + (c.x / W) * mw - 1, my + (c.y / H) * mh - 1, 3, 3);
+        ctx.fillRect(px(c.x) - 1, py(c.y) - 1, 3, 3);
     }
+    ctx.restore();
 }
 
 function drawShapeGoals() {
