@@ -80,6 +80,9 @@ export async function start(opts) {
     let armed = null;  // { startX, startY, startT, worldX, worldY } | null
 
     const onMouseDown = (e) => {
+        // Only the left button drives grab/whistle/pan. Right/middle are reserved (right opens
+        // the custom context menu via its own handler) and must not start a grab.
+        if (e.button !== 0) return;
         ensureAudio();
         const world = clientToWorld(e.clientX, e.clientY);
         state.mouseWorld = world;
@@ -167,6 +170,7 @@ export async function start(opts) {
     const onWindowBlur = () => {
         if (state.pan.active) { state.pan.active = false; if (viewport) viewport.classList.remove('dragging'); }
         armed = null;
+        hideContextMenu();
         if ((state.attachedBlockId || state.attachedShapeId) && connection) {
             state.attachedBlockId = null;
             state.attachedShapeId = null;
@@ -183,13 +187,41 @@ export async function start(opts) {
         raf = requestAnimationFrame(loop);
     };
 
+    // Custom right-click menu (replaces the browser's). Placeholder "TBD" for now.
+    const hideContextMenu = () => { if (els.contextMenu) els.contextMenu.setAttribute('hidden', ''); };
+    const onContextMenu = (e) => {
+        e.preventDefault();                       // suppress the native menu everywhere in the room
+        const menu = els.contextMenu;
+        if (!menu) return;
+        menu.removeAttribute('hidden');
+        // Position at the pointer, nudged back inside the window if it would overflow an edge.
+        const mw = menu.offsetWidth, mh = menu.offsetHeight;
+        const x = Math.max(4, Math.min(e.clientX, window.innerWidth - mw - 4));
+        const y = Math.max(4, Math.min(e.clientY, window.innerHeight - mh - 4));
+        menu.style.left = x + 'px';
+        menu.style.top = y + 'px';
+    };
+    // Any pointer-down outside the menu, Escape, a wheel, or losing focus dismisses it.
+    const onDocPointerDown = (e) => {
+        const menu = els.contextMenu;
+        if (menu && !menu.hasAttribute('hidden') && !menu.contains(e.target)) hideContextMenu();
+    };
+    const onKeyDown = (e) => { if (e.key === 'Escape') hideContextMenu(); };
+    const onMenuClick = () => hideContextMenu();   // future items will handle their own actions
+
+    const wheelHandler = (e) => { hideContextMenu(); onWheel(e); };
+
     canvas.addEventListener('mousedown', onMouseDown);
-    canvas.addEventListener('wheel', onWheel, { passive: false });
+    canvas.addEventListener('wheel', wheelHandler, { passive: false });
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
     window.addEventListener('blur', onWindowBlur);
     window.addEventListener('focus', onWindowFocus);
     document.addEventListener('visibilitychange', onWindowFocus);
+    document.addEventListener('contextmenu', onContextMenu);
+    document.addEventListener('mousedown', onDocPointerDown, true);
+    window.addEventListener('keydown', onKeyDown);
+    if (els.contextMenu) els.contextMenu.addEventListener('click', onMenuClick);
 
     // Cache the HUD elements once. Hot-path renderers (renderVote/syncLevelDropdown/renderStatus)
     // read from here instead of re-querying the DOM at 30 Hz.
@@ -206,6 +238,7 @@ export async function start(opts) {
         banner:       document.getElementById('room-level-banner'),
         bannerTitle:  document.getElementById('room-level-banner-title'),
         bannerSub:    document.getElementById('room-level-banner-sub'),
+        contextMenu:  document.getElementById('room-context-menu'),
     };
 
     // HUD wiring — Reset button + level dropdown + vote overlay.
@@ -227,12 +260,16 @@ export async function start(opts) {
 
     detachListeners = () => {
         canvas.removeEventListener('mousedown', onMouseDown);
-        canvas.removeEventListener('wheel', onWheel);
+        canvas.removeEventListener('wheel', wheelHandler);
         window.removeEventListener('mousemove', onMouseMove);
         window.removeEventListener('mouseup', onMouseUp);
         window.removeEventListener('blur', onWindowBlur);
         window.removeEventListener('focus', onWindowFocus);
         document.removeEventListener('visibilitychange', onWindowFocus);
+        document.removeEventListener('contextmenu', onContextMenu);
+        document.removeEventListener('mousedown', onDocPointerDown, true);
+        window.removeEventListener('keydown', onKeyDown);
+        if (els.contextMenu) els.contextMenu.removeEventListener('click', onMenuClick);
         window.removeEventListener('resize', resize);
         if (resetBtn)    resetBtn.removeEventListener('click', onResetClick);
         if (levelSelect) levelSelect.removeEventListener('change', onLevelChange);

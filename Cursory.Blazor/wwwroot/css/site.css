@@ -215,6 +215,30 @@ html, body {
 .room-vote-no:hover  { background: rgba(216,90,48,0.28); }
 .room-vote-yes[disabled], .room-vote-no[disabled] { opacity: 0.5; cursor: not-allowed; }
 
+.room-context-menu {
+    position: fixed;
+    z-index: 60;
+    min-width: 150px;
+    background: #1a1a1a;
+    border: 1px solid rgba(127,119,221,0.5);
+    border-radius: 8px;
+    padding: 4px;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.6);
+    cursor: default;
+    user-select: none;
+}
+.room-context-menu[hidden] { display: none; }
+.room-context-item {
+    padding: 7px 12px;
+    border-radius: 5px;
+    font-size: 13px;
+    color: rgba(255,255,255,0.85);
+    cursor: pointer;
+}
+.room-context-item:hover { background: rgba(127,119,221,0.18); }
+.room-context-item-disabled { color: rgba(255,255,255,0.4); cursor: default; }
+.room-context-item-disabled:hover { background: transparent; }
+
 .room-hud-logout { margin-left: 0; }
 .room-hud-logout button {
     background: transparent;
