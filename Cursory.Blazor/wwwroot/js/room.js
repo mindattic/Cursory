@@ -17,6 +17,13 @@ let ctx = null;
 let viewport = null;
 let detachListeners = null;
 let audioCtx = null;
+// HUD elements cached once in start() — renderVote/syncLevelDropdown/renderStatus run at the
+// 30 Hz snapshot rate, so re-resolving them by id every frame is needless DOM churn.
+let els = {};
+
+// Mirrors the server VoteKind enum (Cursory.Core.Models). Wire format is the numeric ordinal,
+// so name it here rather than sprinkling magic numbers through the vote rendering.
+const VoteKind = { Reset: 0, SelectLevel: 1 };
 
 const state = {
     me: { userId: '', displayName: '', color: '#7F77DD' },
@@ -32,6 +39,10 @@ const state = {
     attachedShapeId: null,
     lastSent: 0,
     whistleAnims: [], // {x, y, color, t0}
+    seenWhistles: new Map(), // "userId:tick" -> performance.now() first seen. A whistle rides
+                             // several snapshots (broadcast window > ripple TTL) but should only
+                             // play once; entries are pruned by age so an in-window whistle is
+                             // never re-fired (a blunt full clear could do that).
     connection: { status: 'connecting' }, // 'connecting' | 'connected' | 'reconnecting' | 'disconnected'
 };
 
@@ -135,15 +146,73 @@ export async function start(opts) {
         }
     };
 
+    // Wheel zoom, anchored at the cursor: the world point under the pointer stays put as the
+    // zoom changes, so zooming feels like leaning in rather than recentering. Clamped so you
+    // can pull back to roughly the whole 10k world and push in to ~4×.
+    const ZOOM_MIN = 0.1, ZOOM_MAX = 4;
+    const onWheel = (e) => {
+        e.preventDefault();
+        const before = clientToWorld(e.clientX, e.clientY);
+        const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+        state.cam.z = clamp(state.cam.z * factor, ZOOM_MIN, ZOOM_MAX);
+        const after = clientToWorld(e.clientX, e.clientY);
+        state.cam.x = clamp(state.cam.x + (before.x - after.x), 0, state.world.width);
+        state.cam.y = clamp(state.cam.y + (before.y - after.y), 0, state.world.height);
+        state.mouseWorld = clientToWorld(e.clientX, e.clientY);
+    };
+
+    // Losing window focus: a mouseup can land off-canvas and never reach us, leaving a pan or
+    // grab stuck "held". Clear interaction state (and tell the server to release) so returning
+    // to the tab is clean rather than dragging whatever was under the cursor when you left.
+    const onWindowBlur = () => {
+        if (state.pan.active) { state.pan.active = false; if (viewport) viewport.classList.remove('dragging'); }
+        armed = null;
+        if ((state.attachedBlockId || state.attachedShapeId) && connection) {
+            state.attachedBlockId = null;
+            state.attachedShapeId = null;
+            connection.invoke('Release').catch(noop);
+        }
+    };
+    // Regaining focus / visibility: while the tab was hidden the browser parks
+    // requestAnimationFrame, and the in-flight frame may never fire — which breaks the
+    // self-rescheduling loop and leaves the canvas frozen (cursor not redrawn) on return.
+    // Cancel any stale handle and kick a fresh frame so it repaints immediately.
+    const onWindowFocus = () => {
+        if (document.hidden) return;
+        cancelAnimationFrame(raf);
+        raf = requestAnimationFrame(loop);
+    };
+
     canvas.addEventListener('mousedown', onMouseDown);
+    canvas.addEventListener('wheel', onWheel, { passive: false });
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
+    window.addEventListener('blur', onWindowBlur);
+    window.addEventListener('focus', onWindowFocus);
+    document.addEventListener('visibilitychange', onWindowFocus);
+
+    // Cache the HUD elements once. Hot-path renderers (renderVote/syncLevelDropdown/renderStatus)
+    // read from here instead of re-querying the DOM at 30 Hz.
+    els = {
+        status:       document.getElementById('room-status'),
+        levelSelect:  document.getElementById('room-level-select'),
+        voteOverlay:  document.getElementById('room-vote-overlay'),
+        voteTitle:    document.getElementById('room-vote-title'),
+        voteYes:      document.getElementById('room-vote-yes'),
+        voteNo:       document.getElementById('room-vote-no'),
+        voteNeed:     document.getElementById('room-vote-need'),
+        voteYesBtn:   document.getElementById('room-vote-yes-btn'),
+        voteNoBtn:    document.getElementById('room-vote-no-btn'),
+        banner:       document.getElementById('room-level-banner'),
+        bannerTitle:  document.getElementById('room-level-banner-title'),
+        bannerSub:    document.getElementById('room-level-banner-sub'),
+    };
 
     // HUD wiring — Reset button + level dropdown + vote overlay.
     const resetBtn = document.getElementById('room-reset-btn');
-    const levelSelect = document.getElementById('room-level-select');
-    const voteYesBtn = document.getElementById('room-vote-yes-btn');
-    const voteNoBtn  = document.getElementById('room-vote-no-btn');
+    const levelSelect = els.levelSelect;
+    const voteYesBtn = els.voteYesBtn;
+    const voteNoBtn  = els.voteNoBtn;
     const onResetClick  = () => { if (connection) connection.invoke('StartResetVote').catch(noop); };
     const onLevelChange = (e) => {
         const lvl = parseInt(e.target.value, 10);
@@ -158,8 +227,12 @@ export async function start(opts) {
 
     detachListeners = () => {
         canvas.removeEventListener('mousedown', onMouseDown);
+        canvas.removeEventListener('wheel', onWheel);
         window.removeEventListener('mousemove', onMouseMove);
         window.removeEventListener('mouseup', onMouseUp);
+        window.removeEventListener('blur', onWindowBlur);
+        window.removeEventListener('focus', onWindowFocus);
+        document.removeEventListener('visibilitychange', onWindowFocus);
         window.removeEventListener('resize', resize);
         if (resetBtn)    resetBtn.removeEventListener('click', onResetClick);
         if (levelSelect) levelSelect.removeEventListener('change', onLevelChange);
@@ -186,16 +259,27 @@ export async function start(opts) {
     connection.on('Snapshot', (snap) => {
         state.snapshot = snap;
         renderVote(snap.vote);
-        syncLevelDropdown(snap.currentLevel);
+        syncLevelDropdown(snap.currentLevel, snap.levelCount);
         // Drive a local whistle anim for any whistles we didn't fire ourselves (others' clicks).
+        // De-dup on a stable (userId, tick) key, not position+colour: the server rebroadcasts a
+        // whistle for ~1 s but the ripple only lives 700 ms, so a position-match check would
+        // re-fire the tone once the ripple has aged out. The key set is bounded below.
         if (snap.whistles && snap.whistles.length) {
+            const nowp = performance.now();
             for (const w of snap.whistles) {
                 if (w.userId === state.me.userId) continue;
-                const recent = state.whistleAnims.find(a =>
-                    a.x === w.x && a.y === w.y && a.color === w.color);
-                if (recent) continue;
-                state.whistleAnims.push({ x: w.x, y: w.y, color: w.color, t0: performance.now() });
+                const key = w.userId + ':' + w.tick;
+                if (state.seenWhistles.has(key)) continue;
+                state.seenWhistles.set(key, nowp);
+                state.whistleAnims.push({ x: w.x, y: w.y, color: w.color, t0: nowp });
                 playWhistle(w.color);
+            }
+            // Bound the dedup map by AGE, not a hard clear: drop keys older than the broadcast
+            // window (~1 s) plus slack, so a whistle still being rebroadcast can never replay.
+            if (state.seenWhistles.size > 256) {
+                for (const [k, t] of state.seenWhistles) {
+                    if (nowp - t > 2000) state.seenWhistles.delete(k);
+                }
             }
         }
     });
@@ -216,6 +300,11 @@ export async function stop() {
     cancelAnimationFrame(raf); raf = 0;
     if (detachListeners) { detachListeners(); detachListeners = null; }
     if (connection) { try { await connection.stop(); } catch {} connection = null; }
+    // Drop cached element refs + derived UI state so a fresh start() re-resolves against the
+    // newly rendered DOM rather than holding handles to detached nodes.
+    els = {};
+    _lastSeenLevel = 0;
+    _lastLevelCount = 0;
 }
 
 function loop(now) {
@@ -319,6 +408,14 @@ function drawBlocks() {
     }
 }
 
+// Render position of a cursor. The local player's own cursor is predicted at the live mouse
+// position (state.mouseWorld) instead of the server snapshot, which lags ~1 RTT + a tick — so
+// your arrow tracks your hand instead of trailing it. Remote cursors stay authoritative.
+function cursorRenderPos(c) {
+    if (c.userId === state.me.userId) return { x: state.mouseWorld.x, y: state.mouseWorld.y };
+    return { x: c.x, y: c.y };
+}
+
 // World position of a cursor's grab anchor on a (rotated) block.
 function blockAnchorWorld(b, c) {
     const cos = Math.cos(b.angle || 0), sin = Math.sin(b.angle || 0);
@@ -394,10 +491,11 @@ function drawAttachLines() {
         if (!c.attachedBlockId) continue;
         const b = blockById.get(c.attachedBlockId);
         if (!b) continue;
+        const p = cursorRenderPos(c);
         const [ax, ay] = blockAnchorWorld(b, c);
         // Truncate the line at the max-force reach. The full segment would run anchor → cursor;
         // we draw at most MAX_PULL_PX of it so an over-stretched pull reads as "maxed out".
-        const dx = c.x - ax, dy = c.y - ay;
+        const dx = p.x - ax, dy = p.y - ay;
         const dist = Math.hypot(dx, dy) || 1;
         const reach = Math.min(dist, MAX_PULL_PX);
         const ex = ax + (dx / dist) * reach, ey = ay + (dy / dist) * reach;
@@ -432,13 +530,14 @@ function drawCursors() {
     for (const s of state.snapshot.shapes || []) shapeById.set(s.id, s);
     for (const c of state.snapshot.cursors || []) {
         const isMe = c.userId === state.me.userId;
+        const p = cursorRenderPos(c);
         // Rotation: if attached, point inward at anchor; otherwise point up.
         let rot = 0;
         if (c.attachedBlockId) {
             const b = blockById.get(c.attachedBlockId);
             if (b) {
                 const [ax, ay] = blockAnchorWorld(b, c);
-                rot = Math.atan2(ay - c.y, ax - c.x);
+                rot = Math.atan2(ay - p.y, ax - p.x);
             }
         } else if (c.attachedShapeId) {
             const s = shapeById.get(c.attachedShapeId);
@@ -446,18 +545,20 @@ function drawCursors() {
                 const cos = Math.cos(s.angle), sin = Math.sin(s.angle);
                 const ax = s.x + c.anchorLocalX * cos - c.anchorLocalY * sin;
                 const ay = s.y + c.anchorLocalX * sin + c.anchorLocalY * cos;
-                rot = Math.atan2(ay - c.y, ax - c.x);
+                rot = Math.atan2(ay - p.y, ax - p.x);
             }
         }
-        drawArrow(c.x, c.y, rot, c.color, isMe);
-        // Name tag
-        ctx.fillStyle = withAlpha('#000000', 0.6);
-        ctx.fillRect(c.x + 18, c.y + 6, ctx.measureText(c.displayName).width + 10, 18);
-        ctx.fillStyle = c.color;
+        drawArrow(p.x, p.y, rot, c.color, isMe);
+        // Name tag. Set the font BEFORE measuring — measureText uses the current ctx.font, so
+        // measuring first would size the background box with whatever font the last draw call
+        // left set (e.g. the 20px switch label), producing a box that doesn't fit the text.
         ctx.font = '12px system-ui';
         ctx.textAlign = 'left';
         ctx.textBaseline = 'top';
-        ctx.fillText(c.displayName, c.x + 23, c.y + 9);
+        ctx.fillStyle = withAlpha('#000000', 0.6);
+        ctx.fillRect(p.x + 18, p.y + 6, ctx.measureText(c.displayName).width + 10, 18);
+        ctx.fillStyle = c.color;
+        ctx.fillText(c.displayName, p.x + 23, p.y + 9);
     }
 }
 
@@ -509,8 +610,14 @@ function drawMinimap() {
     const vh = (canvas.height / z) / H * mh;
     const vx = mx + (state.cam.x - canvas.width / (2 * z)) / W * mw;
     const vy = my + (state.cam.y - canvas.height / (2 * z)) / H * mh;
-    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
-    ctx.strokeRect(vx, vy, vw, vh);
+    // Clamp the viewport rect to the minimap bounds — when zoomed all the way out the view is
+    // wider than the world, so the raw rect would spill outside the 160-px minimap box.
+    const cx0 = Math.max(mx, vx), cy0 = Math.max(my, vy);
+    const cx1 = Math.min(mx + mw, vx + vw), cy1 = Math.min(my + mh, vy + vh);
+    if (cx1 > cx0 && cy1 > cy0) {
+        ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+        ctx.strokeRect(cx0, cy0, cx1 - cx0, cy1 - cy0);
+    }
     // Cursors as dots
     for (const c of state.snapshot.cursors || []) {
         ctx.fillStyle = c.color;
@@ -564,10 +671,11 @@ function drawShapeAttachLines() {
         if (!c.attachedShapeId) continue;
         const s = shapeById.get(c.attachedShapeId);
         if (!s) continue;
+        const p = cursorRenderPos(c);
         const cos = Math.cos(s.angle), sin = Math.sin(s.angle);
         const ax = s.x + c.anchorLocalX * cos - c.anchorLocalY * sin;
         const ay = s.y + c.anchorLocalX * sin + c.anchorLocalY * cos;
-        const dist = Math.hypot(c.x - ax, c.y - ay);
+        const dist = Math.hypot(p.x - ax, p.y - ay);
         // Thicker + brighter as distance grows. Scaled so a ~150-unit pull is fully saturated.
         const t = Math.min(1, dist / 200);
         ctx.setLineDash([14, 10]);
@@ -576,7 +684,7 @@ function drawShapeAttachLines() {
         ctx.lineWidth = 2 + 4 * t;
         ctx.beginPath();
         ctx.moveTo(ax, ay);
-        ctx.lineTo(c.x, c.y);
+        ctx.lineTo(p.x, p.y);
         ctx.stroke();
         ctx.setLineDash([]);
         ctx.lineDashOffset = 0;
@@ -661,41 +769,45 @@ function playWhistle(color) {
 }
 
 function renderVote(vote) {
-    const overlay = document.getElementById('room-vote-overlay');
+    const overlay = els.voteOverlay;
     if (!overlay) return;
     if (!vote) {
         overlay.setAttribute('hidden', '');
         return;
     }
     overlay.removeAttribute('hidden');
-    const titleEl = document.getElementById('room-vote-title');
-    if (titleEl) {
-        if (vote.kind === 1 /* SelectLevel */)
-            titleEl.textContent = `Switch to Level ${vote.targetLevel}?`;
+    if (els.voteTitle) {
+        if (vote.kind === VoteKind.SelectLevel)
+            els.voteTitle.textContent = `Switch to Level ${vote.targetLevel}?`;
         else
-            titleEl.textContent = 'Reset the level?';
+            els.voteTitle.textContent = 'Reset the level?';
     }
-    const yesEl  = document.getElementById('room-vote-yes');
-    const noEl   = document.getElementById('room-vote-no');
-    const needEl = document.getElementById('room-vote-need');
-    if (yesEl)  yesEl.textContent  = vote.yesUserIds.length;
-    if (noEl)   noEl.textContent   = vote.noUserIds.length;
-    if (needEl) needEl.textContent = vote.quorum;
+    if (els.voteYes)  els.voteYes.textContent  = vote.yesUserIds.length;
+    if (els.voteNo)   els.voteNo.textContent   = vote.noUserIds.length;
+    if (els.voteNeed) els.voteNeed.textContent = vote.quorum;
     // Disable the buttons if I've already voted on this round.
     const alreadyVoted =
         vote.yesUserIds.includes(state.me.userId) ||
         vote.noUserIds.includes(state.me.userId);
-    const yesBtn = document.getElementById('room-vote-yes-btn');
-    const noBtn  = document.getElementById('room-vote-no-btn');
-    if (yesBtn) yesBtn.disabled = alreadyVoted;
-    if (noBtn)  noBtn.disabled  = alreadyVoted;
+    if (els.voteYesBtn) els.voteYesBtn.disabled = alreadyVoted;
+    if (els.voteNoBtn)  els.voteNoBtn.disabled  = alreadyVoted;
 }
 
 let _lastSeenLevel = 0;
-function syncLevelDropdown(level) {
+let _lastLevelCount = 0;
+function syncLevelDropdown(level, levelCount) {
     if (!level) return;
-    const sel = document.getElementById('room-level-select');
+    const sel = els.levelSelect;
     if (sel) {
+        // Hide options the server can't actually load (only LevelCount levels are seeded);
+        // otherwise picking 3–14 fires a level vote the server silently rejects. Re-prune only
+        // when the count changes so we're not touching the DOM every snapshot.
+        if (levelCount && levelCount !== _lastLevelCount) {
+            for (const opt of sel.options) {
+                opt.hidden = Number(opt.value) > levelCount;
+            }
+            _lastLevelCount = levelCount;
+        }
         const target = String(level);
         if (sel.value !== target) sel.value = target;
     }
@@ -710,9 +822,9 @@ function syncLevelDropdown(level) {
 function showLevelBanner(level) {
     const labels = state.geometry.labels || [];
     const match = labels.find(l => (l.id || '').startsWith(`L${level}-label`));
-    const banner = document.getElementById('room-level-banner');
-    const titleEl = document.getElementById('room-level-banner-title');
-    const subEl   = document.getElementById('room-level-banner-sub');
+    const banner = els.banner;
+    const titleEl = els.bannerTitle;
+    const subEl   = els.bannerSub;
     if (!banner || !titleEl || !subEl) return;
     titleEl.textContent = match ? match.title : `Level ${level}`;
     subEl.textContent   = match ? match.subtitle : '';
@@ -726,7 +838,7 @@ function showLevelBanner(level) {
 }
 
 function renderStatus() {
-    const el = document.getElementById('room-status');
+    const el = els.status;
     if (!el) return;
     const s = state.connection.status;
     el.className = 'room-status room-status-' + s;

@@ -2,17 +2,24 @@
 
 Multiplayer cursor puzzles. Sign-in gates an HTML5-canvas room where every
 logged-in player's cursor renders for every other player in real time, and
-puzzles are solved by cursors cooperating (sum-of-springs drag, switch tiles
-that need N cursors, gated doors).
+puzzles are solved by cursors cooperating — grabbing a block creates a
+capped-force joint, so a heavy body needs two cursors pulling together and
+offset pulls genuinely rotate it.
+
+> **Physics: real rigid bodies via Aether.Physics2D (commit b12cec4).** The
+> earlier hand-rolled "sum-of-springs" kinematics with switch tiles, gated
+> doors and per-axis wall collision are gone. The current build is a 2-level
+> spike (`LevelCount = 2`) validating engine feel; levels 3–14 (preserved in
+> commit 541d39e) get re-ported onto the engine before their mechanics return.
 
 ## Repo shape
 
 | Project           | Purpose                                                                                                                                                                                   |
 | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Cursory.Core`    | Domain + services. `UserAccount`/`UserRepository` (JSON file at `%APPDATA%\MindAttic\Cursory\users.json`), `AuthService` (BCrypt + lockout, modelled on StreetSamurai). `RoomState` carries the authoritative simulation: `Step()` is the physics tick (sum-of-springs cooperative drag, per-axis wall+door collision, switch occupancy, door gating). `Snapshot()` builds a defensive copy for broadcast. |
+| `Cursory.Core`    | Domain + services. `UserAccount`/`UserRepository` (JSON file at `%APPDATA%\MindAttic\Cursory\users.json`), `AuthService` (BCrypt + lockout, modelled on StreetSamurai). `RoomState` carries the authoritative simulation, backed by an Aether.Physics2D `World` (gravity-free, top-down): each block is a dynamic body, a `FrictionJoint` to a static ground gives dry friction, and grabs are capped-force `FixedMouseJoint`s. `Step()` drives the joints + steps the engine; `Snapshot()` builds a defensive copy for broadcast. All engine access is serialised under `worldLock`. |
 | `Cursory.Shared`  | Razor components shared with the host. Currently just `Home.razor` — the gated game page that opens the SignalR connection and imports `js/room.js`.                                       |
 | `Cursory.Blazor`  | ASP.NET Core host. `Program.cs` wires cookie auth, antiforgery, rate-limited `/api/auth/login`, forwarded headers (for Azure), the SignalR hub, and the seeded users. `Hubs/RoomHub.cs` is write-only — clients send `Move`/`Grab`/`Release`/`Whistle`, state arrives back over the snapshot channel. `Services/GameLoopService.cs` is a `BackgroundService` that ticks at 30 Hz and broadcasts `WorldSnapshot` to `Clients.All`. |
-| `Cursory.Tests`   | xUnit. Covers `AuthService` (seed idempotency, lockout, weak password rejection, `IsLocalUrl` open-redirect filter) and `RoomState` (single-cursor sub-threshold, two-cursor breakthrough, opposing-cursor cancellation, wall collision per axis, switch activation, door gating, closed-door blockage). |
+| `Cursory.Tests`   | NUnit. Covers `AuthService` (seed idempotency, `SetAllPasswords`, lockout, weak password rejection, `IsLocalUrl` open-redirect filter), `RoomState` (grab snaps to nearest corner, single cursor moves a light block but can't budge a heavy one, two cursors break friction, opposing pulls cancel, offset-opposing pulls rotate the body, stale-cursor eviction), and the vote/level machinery (2/3 quorum, early-reject, level switch). |
 
 ## Multiplayer architecture
 
@@ -39,9 +46,14 @@ egress on a single node — fine for the App Service tier we'd target.
 - **World coordinates everywhere**: `room.js` does the canvas/world transform
   *once* in `clientToWorld`. Every payload to the server is world coords;
   rendering and pan/zoom live on the client.
-- **Velocity cap**: `MaxVelocityPerTick = 30` in `RoomState`. Thin walls and
-  doors are ≥ 60 wide. Adding thinner geometry? Either raise the wall thickness
-  or lower the cap — otherwise blocks tunnel through it.
+- **Engine units**: the Aether `World` runs in metres at `PixelsPerMeter = 100`
+  (a 10 000-px world = 100 m), converted at the boundary by `ToM`/`ToPx`; the
+  camelCase wire format stays in world pixels. The co-op mechanic lives in one
+  relationship: a body's `FrictionJoint.MaxForce` (`StaticFriction × FrictionForceScale`)
+  vs a single grab's `GrabMaxForce` — friction above one grab's ceiling needs two
+  cursors. Tune feel via the "Feel knobs" consts in `RoomState`.
+- **Block velocity is server-internal**: `BlockState.Vx/Vy` are `[JsonIgnore]`d —
+  the client renders from `X/Y/Angle` only, so they stay off the wire.
 - **Password policy is strict; seeded users bypass it.** `SeedUser` writes the
   BCrypt hash directly and is idempotent. `CreateUser` enforces ≥ 8 chars,
   upper + lower + digit + special. The two seeded accounts (`gungreeneyes`,

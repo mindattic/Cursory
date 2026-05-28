@@ -69,6 +69,10 @@ public class RoomState
     private int currentLevel = 1;
     private readonly Lock levelLock = new();
     private const int WhistleRingCapacity = 256;
+    /// <summary>Ticks a whistle stays in the broadcast snapshot (~1 s at 30 Hz). The client
+    /// renders its ripple for a hair longer, so a whistle leaves the wire before its local
+    /// animation expires — see room.js's whistle de-dup.</summary>
+    private const int WhistleBroadcastTicks = 30;
 
     private long currentTick;
 
@@ -137,14 +141,18 @@ public class RoomState
         cursors.TryRemove(userId, out _);
     }
 
-    /// <summary>Client → server cursor input (world coords). Server-clamped; NaN dropped.</summary>
-    public void SetCursorPosition(string userId, double x, double y)
+    /// <summary>Client → server cursor input (world coords). Server-clamped; NaN dropped.
+    /// Returns false if there is no cursor registered for <paramref name="userId"/> — the
+    /// caller can use that to re-register a player whose cursor was evicted while their tab
+    /// was backgrounded (rAF throttling stalls the 30 Hz input stream past the stale cutoff).</summary>
+    public bool SetCursorPosition(string userId, double x, double y)
     {
-        if (!cursors.TryGetValue(userId, out var c)) return;
-        if (!IsFinite(x) || !IsFinite(y)) return;
+        if (!cursors.TryGetValue(userId, out var c)) return false;
+        if (!IsFinite(x) || !IsFinite(y)) return true;
         c.X = Math.Clamp(x, 0, WorldGeometry.Width);
         c.Y = Math.Clamp(y, 0, WorldGeometry.Height);
         c.LastInputTick = CurrentTick;
+        return true;
     }
 
     private static bool IsFinite(double v) => !double.IsNaN(v) && !double.IsInfinity(v);
@@ -408,6 +416,9 @@ public class RoomState
 
     /// <summary>All live cursors (defensive copy).</summary>
     public IReadOnlyCollection<CursorState> AllCursors => cursors.Values.ToList();
+    /// <summary>Live cursor count without the defensive copy <see cref="AllCursors"/> allocates —
+    /// cheap enough to read on the hot tick path (e.g. slow-tick telemetry).</summary>
+    public int CursorCount => cursors.Count;
     /// <summary>All blocks (defensive copy).</summary>
     public IReadOnlyCollection<BlockState> AllBlocks => blocks.Values.ToList();
     /// <summary>All walls (defensive copy).</summary>
@@ -487,7 +498,7 @@ public class RoomState
             Doors = [],
             Shapes = [],
             ShapeGoals = [],
-            Whistles = whistles.Where(w => tick - w.Tick < 30).Select(CloneWhistle).ToList(),
+            Whistles = whistles.Where(w => tick - w.Tick < WhistleBroadcastTicks).Select(CloneWhistle).ToList(),
             Vote = CurrentVote,
             CurrentLevel = CurrentLevel,
             LevelCount = LevelCount,
@@ -566,6 +577,13 @@ public class RoomState
                 b.Y > g.Y - g.H / 2 && b.Y < g.Y + g.H / 2;
         }
 
+        // Drop whistles older than the broadcast window so Snapshot's per-tick scan stays
+        // bounded by recent activity, not the ring capacity. Single-consumer dequeue (only the
+        // game loop drains) so this is safe against concurrent RecordWhistle enqueues.
+        var whistleCutoff = CurrentTick - WhistleBroadcastTicks;
+        while (whistles.TryPeek(out var oldest) && oldest.Tick < whistleCutoff)
+            whistles.TryDequeue(out _);
+
         AdvanceTick();
         TimeoutVoteIfExpired();
     }
@@ -604,6 +622,12 @@ public class RoomState
             }
             SeedPuzzles();
         }
+        // Walls + labels are static geometry the client only receives on connect or on an
+        // explicit rebroadcast. A reset re-seeds them (identical for the current spike levels,
+        // but not once a re-ported level carries walls), so push them out so every client's
+        // geometry matches the freshly seeded world. SwitchToLevel sets this too — a double
+        // set is harmless (the loop reads-and-clears once).
+        Interlocked.Exchange(ref pendingGeometryRebroadcast, 1);
     }
 
     /// <summary>

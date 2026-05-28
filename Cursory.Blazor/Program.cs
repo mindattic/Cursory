@@ -104,6 +104,12 @@ using (var scope = app.Services.CreateScope())
 var forwardedOptions = new ForwardedHeadersOptions
 {
     ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto,
+    // Consume exactly ONE entry from the right of X-Forwarded-For — the address the single
+    // Azure front-end appends, i.e. the real client. Anything a client injects to the left is
+    // ignored, so RemoteIpAddress (the login rate-limiter's partition key) can't be spoofed to
+    // dodge the per-IP brute-force limit. This is the framework default; pinned explicitly
+    // because we clear the proxy allowlist below, which would otherwise be the only guard.
+    ForwardLimit = 1,
 };
 // Azure App Service sits behind a load balancer outside the loopback range, so trust
 // any proxy. The default loopback-only allowlist would drop the header in production.

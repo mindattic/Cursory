@@ -45,6 +45,11 @@ public class AuthService
         if (username.Contains('\0') || password.Contains('\0'))
             return null;
 
+        // Stored usernames are trimmed (CreateUser/SeedUser); trim the input too so a stray
+        // leading/trailing space doesn't read as a wrong username — and so the lockout key
+        // below can't be split across the trimmed and untrimmed forms.
+        username = username.Trim();
+
         var user = users.GetByUsername(username);
 
         // Constant-time BCrypt regardless of user existence or lockout state.

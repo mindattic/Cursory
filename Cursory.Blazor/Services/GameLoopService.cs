@@ -45,6 +45,10 @@ public class GameLoopService : BackgroundService
                 {
                     var swStart = System.Diagnostics.Stopwatch.GetTimestamp();
                     room.Step();
+                    // Nobody connected — the physics tick above keeps votes/whistles ageing out,
+                    // but there's no one to broadcast to and nothing to evict, so skip the
+                    // snapshot clone + fan-out entirely. Keeps an empty node near-idle.
+                    if (room.CursorCount == 0) continue;
                     if (room.CurrentTick % EvictionEveryNTicks == 0)
                     {
                         var dropped = room.EvictStaleCursors(StaleCursorTicks);
@@ -73,7 +77,7 @@ public class GameLoopService : BackgroundService
                         slowTickLastLogged = DateTime.UtcNow;
                         log.LogWarning(
                             "Slow tick: {Ms} ms (budget {BudgetMs} ms), cursors={Cursors}",
-                            elapsed.TotalMilliseconds, TickInterval.TotalMilliseconds, room.AllCursors.Count);
+                            elapsed.TotalMilliseconds, TickInterval.TotalMilliseconds, room.CursorCount);
                     }
                 }
                 catch (OperationCanceledException) { throw; }

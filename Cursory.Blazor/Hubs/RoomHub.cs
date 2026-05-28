@@ -44,9 +44,20 @@ public class RoomHub : Hub
     /// <summary>Client → server, 30Hz. World coordinates.</summary>
     public Task Move(double x, double y)
     {
-        var userId = Context.User?.FindFirst("UserId")?.Value;
+        var user = Context.User;
+        var userId = user?.FindFirst("UserId")?.Value;
         if (string.IsNullOrEmpty(userId)) return Task.CompletedTask;
-        room.SetCursorPosition(userId, x, y);
+        // A backgrounded tab throttles requestAnimationFrame, which stalls the 30 Hz input
+        // stream long enough for the stale-cursor sweep to evict a player who is still
+        // connected. When their Move resumes (tab refocused) the cursor is gone, so re-register
+        // it from the connection's claims rather than silently dropping the input.
+        if (!room.SetCursorPosition(userId, x, y))
+        {
+            var name = user!.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value ?? "Anon";
+            var color = user.FindFirst("Color")?.Value ?? "#7F77DD";
+            room.AddOrUpdatePlayer(userId, Context.ConnectionId, name, color);
+            room.SetCursorPosition(userId, x, y);
+        }
         return Task.CompletedTask;
     }
 

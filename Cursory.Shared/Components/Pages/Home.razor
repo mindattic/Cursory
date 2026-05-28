@@ -1,4 +1,5 @@
 @page "/"
+@using Cursory.Core.Services
 @attribute [Microsoft.AspNetCore.Authorization.Authorize]
 @inject IJSRuntime JS
 @implements IAsyncDisposable
@@ -14,21 +15,14 @@
         <span class="room-hud-spacer"></span>
         <label class="room-hud-level">
             Level
+            @* Only render the levels the server can actually load (RoomState.LevelCount).
+               LevelNames is the master list of the 14 designed puzzles; re-porting a level
+               onto the engine is just a matter of bumping LevelCount, and this dropdown follows. *@
             <select id="room-level-select">
-                <option value="1">1 — Drop it on the pad</option>
-                <option value="2">2 — Weigh and pass</option>
-                <option value="3">3 — Pivot the couch</option>
-                <option value="4">4 — Stand together, then heave</option>
-                <option value="5">5 — Heavy heave</option>
-                <option value="6">6 — Mirror match</option>
-                <option value="7">7 — Stand and slide</option>
-                <option value="8">8 — Block taxi</option>
-                <option value="9">9 — Couch corner</option>
-                <option value="10">10 — Tug steady</option>
-                <option value="11">11 — Two-key lock</option>
-                <option value="12">12 — Spinner</option>
-                <option value="13">13 — Door hold</option>
-                <option value="14">14 — Long thread</option>
+                @for (var i = 1; i <= RoomState.LevelCount && i <= LevelNames.Length; i++)
+                {
+                    <option value="@i">@i — @LevelNames[i - 1]</option>
+                }
             </select>
         </label>
         <button id="room-reset-btn" type="button" class="room-hud-reset">Reset</button>
@@ -62,6 +56,16 @@
     private string DisplayName { get; set; } = "";
     private string UserId { get; set; } = "";
     private string Color { get; set; } = "#7F77DD";
+
+    // Master list of the 14 designed puzzles (commit 541d39e). The dropdown above renders only
+    // the first RoomState.LevelCount of these, so the menu can never offer a level the server
+    // would silently reject.
+    private static readonly string[] LevelNames =
+    [
+        "Drop it on the pad", "Too heavy for one", "Pivot the couch", "Stand together, then heave",
+        "Heavy heave", "Mirror match", "Stand and slide", "Block taxi", "Couch corner",
+        "Tug steady", "Two-key lock", "Spinner", "Door hold", "Long thread",
+    ];
 
     private IJSObjectReference? jsModule;
 

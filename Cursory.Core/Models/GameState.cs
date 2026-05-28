@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Cursory.Core.Models;
 
 /// <summary>
@@ -41,8 +43,10 @@ public class BlockState
     public double Y { get; set; }
     public double W { get; set; }
     public double H { get; set; }
-    public double Vx { get; set; }
-    public double Vy { get; set; }
+    /// <summary>Engine linear velocity. Server-internal (drives coast/settle); the client
+    /// renders from X/Y/Angle only, so it's kept off the wire to save bandwidth.</summary>
+    [JsonIgnore] public double Vx { get; set; }
+    [JsonIgnore] public double Vy { get; set; }
     /// <summary>Body-frame rotation in radians, anti-clockwise from world x-axis. Real
     /// rigid bodies rotate when cursors pull at different corners; the client renders this.</summary>
     public double Angle { get; set; }
