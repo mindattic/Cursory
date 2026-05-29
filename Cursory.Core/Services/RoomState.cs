@@ -36,6 +36,12 @@ public class RoomState
     private readonly Dictionary<string, Body> bodyByWall = new();
     private readonly Dictionary<string, Body> bodyByShape = new();
     private readonly Dictionary<string, FixedMouseJoint> grabByUser = new();
+    /// <summary>Per-grab segmented-tether wrap: the ordered corner indices the rope currently
+    /// wraps (into the body's corner list), anchor-first. Empty = straight tether. Paired with
+    /// <see cref="contactCorner"/>, the corner the joint is currently anchored at (-1 = the edge
+    /// anchor itself).</summary>
+    private readonly Dictionary<string, List<int>> wrapStack = new();
+    private readonly Dictionary<string, int> contactCorner = new();
 
     /// <summary>World units (pixels) per simulation metre. 10 000-px world = 100 m; a 140-px
     /// block = 1.4 m — comfortably inside Box2D's tuned range, where raw 10 000-unit coords
@@ -351,6 +357,7 @@ public class RoomState
             joint.WorldAnchorB = ToMVec(c.X, c.Y);
             world.Add(joint);
             grabByUser[userId] = joint;
+            contactCorner[userId] = -1;   // contact starts at the edge anchor (no wrap yet)
 
             c.AttachedBlockId = blockId;
             c.AttachedShapeId = null;
@@ -412,6 +419,7 @@ public class RoomState
             joint.WorldAnchorB = ToMVec(c.X, c.Y);
             world.Add(joint);
             grabByUser[userId] = joint;
+            contactCorner[userId] = -1;   // contact starts at the edge anchor (no wrap yet)
 
             c.AttachedBlockId = null;
             c.AttachedWallId = null;
@@ -591,63 +599,137 @@ public class RoomState
         c.PullMass = PullMassFor(c);
     }
 
-    /// <summary>Segmented-tether wrap: when the rope (anchor → cursor) cuts through the body — the
-    /// cursor has swung behind it — re-anchor the grab joint onto the body corner nearest the
-    /// cursor. Pulling a corner tangentially makes the body spin: wrap it like a top. A plain
-    /// outward pull never cuts the body, so normal dragging is unaffected.</summary>
-    private void WrapTether(CursorState c, Body body, List<(double X, double Y)> corners,
+    /// <summary>
+    /// Segmented-tether update: maintain the rope as an accumulating polyline that wraps the body's
+    /// sharp corners. The anchor stays fixed on the edge where you grabbed; whenever the last
+    /// segment cuts through the body the rope catches a new corner (push), and reversing direction
+    /// pops corners off (the rope unwinds). Force is applied at the last contact, so pulling spins
+    /// the body until the rope is straight again. Sets <see cref="CursorState.AnchorWorldX"/>/Y to
+    /// the contact and <see cref="CursorState.TetherPivots"/> to the full chain for rendering.
+    /// </summary>
+    private void UpdateTether(CursorState c, Body body, List<(double X, double Y)> corners,
         List<(double Cx, double Cy, double Hw, double Hh)> rectsLocal, double bodyX, double bodyY, double angle)
     {
-        if (!grabByUser.TryGetValue(c.UserId, out var joint)) return;
+        var userId = c.UserId;
+        if (!grabByUser.ContainsKey(userId)) return;
+        if (!wrapStack.TryGetValue(userId, out var stack)) { stack = []; wrapStack[userId] = stack; }
 
-        // Only wrap when the straight rope (anchor → cursor) actually cuts through the body — i.e.
-        // the cursor has swung behind it. A plain outward pull never cuts, so normal drags are
-        // untouched. (Anchor is already body-local; bring the cursor into the body frame too.)
         var cosN = Math.Cos(-angle);
         var sinN = Math.Sin(-angle);
-        var curLx = (c.X - bodyX) * cosN - (c.Y - bodyY) * sinN;
-        var curLy = (c.X - bodyX) * sinN + (c.Y - bodyY) * cosN;
-        var cuts = false;
-        foreach (var r in rectsLocal)
-            if (SegmentEntersRect(c.AnchorLocalX - r.Cx, c.AnchorLocalY - r.Cy, curLx - r.Cx, curLy - r.Cy, r.Hw, r.Hh))
-            { cuts = true; break; }
-        if (!cuts) return;
+        var cosP = Math.Cos(angle);
+        var sinP = Math.Sin(angle);
+        var aWorldX = bodyX + c.AnchorLocalX * cosP - c.AnchorLocalY * sinP;
+        var aWorldY = bodyY + c.AnchorLocalX * sinP + c.AnchorLocalY * cosP;
 
-        // Re-catch on the corner nearest the cursor.
-        var bd = double.MaxValue;
-        (double X, double Y) best = default;
-        foreach (var cor in corners)
+        bool Cuts(double fromX, double fromY, double toX, double toY, double margin)
         {
-            var d = Math.Sqrt((c.X - cor.X) * (c.X - cor.X) + (c.Y - cor.Y) * (c.Y - cor.Y));
-            if (d < bd) { bd = d; best = cor; }
+            var flx = (fromX - bodyX) * cosN - (fromY - bodyY) * sinN;
+            var fly = (fromX - bodyX) * sinN + (fromY - bodyY) * cosN;
+            var tlx = (toX - bodyX) * cosN - (toY - bodyY) * sinN;
+            var tly = (toX - bodyX) * sinN + (toY - bodyY) * cosN;
+            var best = double.MaxValue;
+            foreach (var r in rectsLocal)
+                if (SegmentRectEntry(flx - r.Cx, fly - r.Cy, tlx - r.Cx, tly - r.Cy, r.Hw + margin, r.Hh + margin, out var t))
+                    best = Math.Min(best, t);
+            _ = best;
+            return best < double.MaxValue;
         }
-        var dx = best.X - bodyX;
-        var dy = best.Y - bodyY;
-        var lx = dx * cosN - dy * sinN;
-        var ly = dx * sinN + dy * cosN;
-        if (Math.Abs(lx - c.AnchorLocalX) < 1 && Math.Abs(ly - c.AnchorLocalY) < 1) return;   // already on this corner
-
-        // Re-anchor the joint onto the corner the rope now catches.
-        world.Remove(joint);
-        var nj = new FixedMouseJoint(body, ToMVec(best.X, best.Y))
+        double EntryT(double fromX, double fromY, double toX, double toY)
         {
-            MaxForce = GrabMaxForce,
-            Frequency = GrabFrequency,
-            DampingRatio = GrabDamping,
-        };
-        nj.WorldAnchorB = ToMVec(c.X, c.Y);
-        world.Add(nj);
-        grabByUser[c.UserId] = nj;
-        c.AnchorLocalX = lx;
-        c.AnchorLocalY = ly;
+            var flx = (fromX - bodyX) * cosN - (fromY - bodyY) * sinN;
+            var fly = (fromX - bodyX) * sinN + (fromY - bodyY) * cosN;
+            var tlx = (toX - bodyX) * cosN - (toY - bodyY) * sinN;
+            var tly = (toX - bodyX) * sinN + (toY - bodyY) * cosN;
+            var best = double.MaxValue;
+            foreach (var r in rectsLocal)
+                if (SegmentRectEntry(flx - r.Cx, fly - r.Cy, tlx - r.Cx, tly - r.Cy, r.Hw, r.Hh, out var t))
+                    best = Math.Min(best, t);
+            return best;
+        }
+
+        // Unwind: pop a pivot once the rope from the point before it to the cursor no longer cuts
+        // the body (with a small clearance margin so it doesn't pop-and-re-catch on the boundary).
+        const double clearMargin = 6;
+        while (stack.Count > 0)
+        {
+            var prevX = stack.Count >= 2 ? corners[stack[^2]].X : aWorldX;
+            var prevY = stack.Count >= 2 ? corners[stack[^2]].Y : aWorldY;
+            if (Cuts(prevX, prevY, c.X, c.Y, clearMargin)) break;
+            stack.RemoveAt(stack.Count - 1);
+        }
+
+        // Wrap: while the last segment cuts the body, catch the corner nearest where it enters.
+        for (var guard = 0; guard < 8; guard++)
+        {
+            var lastX = stack.Count > 0 ? corners[stack[^1]].X : aWorldX;
+            var lastY = stack.Count > 0 ? corners[stack[^1]].Y : aWorldY;
+            // Require the rope to cut clearly INTO the body (rect inset by 12 px) before catching a
+            // corner — so the slight rotation of a normal off-centre pull doesn't spuriously wrap.
+            // With the +6 clearance on the unwind side this gives a stable hysteresis band.
+            if (!Cuts(lastX, lastY, c.X, c.Y, -12)) break;
+            var t = EntryT(lastX, lastY, c.X, c.Y);
+            var ex = lastX + (c.X - lastX) * t;
+            var ey = lastY + (c.Y - lastY) * t;
+            var bi = -1;
+            var bd = double.MaxValue;
+            for (var i = 0; i < corners.Count; i++)
+            {
+                if (stack.Count > 0 && i == stack[^1]) continue;
+                var d = (corners[i].X - ex) * (corners[i].X - ex) + (corners[i].Y - ey) * (corners[i].Y - ey);
+                if (d < bd) { bd = d; bi = i; }
+            }
+            if (bi < 0 || stack.Contains(bi)) break;   // no new corner to catch (or would loop)
+            stack.Add(bi);
+        }
+
+        // Contact = last pivot (or the anchor). Re-anchor the joint there if it moved.
+        int contactIdx;
+        double contactX, contactY;
+        if (stack.Count > 0) { contactIdx = stack[^1]; contactX = corners[contactIdx].X; contactY = corners[contactIdx].Y; }
+        else { contactIdx = -1; contactX = aWorldX; contactY = aWorldY; }
+
+        if (!contactCorner.TryGetValue(userId, out var prevIdx) || prevIdx != contactIdx)
+        {
+            if (grabByUser.TryGetValue(userId, out var oldJoint)) world.Remove(oldJoint);
+            var nj = new FixedMouseJoint(body, ToMVec(contactX, contactY))
+            {
+                MaxForce = GrabMaxForce,
+                Frequency = GrabFrequency,
+                DampingRatio = GrabDamping,
+            };
+            nj.WorldAnchorB = ToMVec(c.X, c.Y);
+            world.Add(nj);
+            grabByUser[userId] = nj;
+            contactCorner[userId] = contactIdx;
+        }
+
+        // Force/leash/rotation key off the contact; the chain (anchor → corners) renders the rope.
+        c.AnchorWorldX = contactX;
+        c.AnchorWorldY = contactY;
+        c.TetherPivots.Clear();
+        c.TetherPivots.Add(aWorldX);
+        c.TetherPivots.Add(aWorldY);
+        foreach (var idx in stack) { c.TetherPivots.Add(corners[idx].X); c.TetherPivots.Add(corners[idx].Y); }
     }
 
-    /// <summary>Does the segment (ax,ay)→(bx,by) enter the axis-aligned rect [-hw,hw]×[-hh,hh]
-    /// somewhere along its length? Slab clip; true when the entry/exit interval is non-empty and
-    /// lies forward of the start. The start sits on the body surface, so this is true exactly when
-    /// the rope heads inward (the cursor is behind the body) and false on a plain outward pull.</summary>
-    private static bool SegmentEntersRect(double ax, double ay, double bx, double by, double hw, double hh)
+    /// <summary>Straight (un-segmented) tether: anchor world from the fixed body-local point, and a
+    /// single-point pivot chain. Used for walls and when <see cref="IsSegmentedTether"/> is off.</summary>
+    private static void SetStraightAnchor(CursorState c, double bodyX, double bodyY, double angle)
     {
+        var cos = Math.Cos(angle);
+        var sin = Math.Sin(angle);
+        c.AnchorWorldX = bodyX + c.AnchorLocalX * cos - c.AnchorLocalY * sin;
+        c.AnchorWorldY = bodyY + c.AnchorLocalX * sin + c.AnchorLocalY * cos;
+        c.TetherPivots.Clear();
+        c.TetherPivots.Add(c.AnchorWorldX);
+        c.TetherPivots.Add(c.AnchorWorldY);
+    }
+
+    /// <summary>Slab clip of segment (ax,ay)→(bx,by) against rect [-hw,hw]×[-hh,hh]. Returns true if
+    /// it enters within its length; <paramref name="tEnter"/> is the entry parameter in [0,1].</summary>
+    private static bool SegmentRectEntry(double ax, double ay, double bx, double by, double hw, double hh, out double tEnter)
+    {
+        tEnter = 0;
         double dx = bx - ax, dy = by - ay, tmin = 0, tmax = 1;
         if (Math.Abs(dx) < 1e-9) { if (ax < -hw || ax > hw) return false; }
         else
@@ -669,6 +751,7 @@ public class RoomState
             tmax = Math.Min(tmax, t2);
             if (tmin > tmax) return false;
         }
+        tEnter = Math.Max(0, tmin);
         return tmax > 1e-3;
     }
 
@@ -711,6 +794,8 @@ public class RoomState
     {
         if (grabByUser.Remove(userId, out var joint))
             world.Remove(joint);   // walls/wires have no joint — only block/shape grabs are in grabByUser
+        wrapStack.Remove(userId);
+        contactCorner.Remove(userId);
         if (cursors.TryGetValue(userId, out var c))
         {
             if (c.AttachedWireId is { } wid && wires.TryGetValue(wid, out var w))
@@ -720,6 +805,7 @@ public class RoomState
             c.AttachedWallId = null;
             c.AttachedWireId = null;
             c.PullMass = 0;
+            c.TetherPivots.Clear();
         }
     }
 
@@ -1052,6 +1138,7 @@ public class RoomState
         AttachedWireId = c.AttachedWireId, AttachedWireEnd = c.AttachedWireEnd,
         AnchorLocalX = c.AnchorLocalX, AnchorLocalY = c.AnchorLocalY,
         AnchorWorldX = c.AnchorWorldX, AnchorWorldY = c.AnchorWorldY, PullMass = c.PullMass,
+        TetherPivots = [.. c.TetherPivots],
     };
     private static BlockState CloneBlock(BlockState b) => new()
     {
@@ -1138,35 +1225,30 @@ public class RoomState
                 if (c.AttachedBlockId is { } bid && blocks.TryGetValue(bid, out var ab))
                 {
                     if (IsSegmentedTether && bodyByBlock.TryGetValue(bid, out var bbody))
-                        WrapTether(c, bbody, BlockCornersWorld(ab),
-                            [(0, 0, ab.W / 2, ab.H / 2)], ab.X, ab.Y, ab.Angle);
-                    var cos = Math.Cos(ab.Angle);
-                    var sin = Math.Sin(ab.Angle);
-                    c.AnchorWorldX = ab.X + c.AnchorLocalX * cos - c.AnchorLocalY * sin;
-                    c.AnchorWorldY = ab.Y + c.AnchorLocalX * sin + c.AnchorLocalY * cos;
+                        UpdateTether(c, bbody, BlockCornersWorld(ab), [(0, 0, ab.W / 2, ab.H / 2)], ab.X, ab.Y, ab.Angle);
+                    else
+                        SetStraightAnchor(c, ab.X, ab.Y, ab.Angle);
                     LeashAndReport(c);
                 }
                 else if (c.AttachedShapeId is { } sid && shapes.TryGetValue(sid, out var ash))
                 {
                     if (IsSegmentedTether && bodyByShape.TryGetValue(sid, out var sbody))
-                        WrapTether(c, sbody, ShapeCornersWorld(ash),
+                        UpdateTether(c, sbody, ShapeCornersWorld(ash),
                             ash.Pieces.Select(p => (p.LocalX, p.LocalY, p.HalfW, p.HalfH)).ToList(),
                             ash.X, ash.Y, ash.Angle);
-                    var cos = Math.Cos(ash.Angle);
-                    var sin = Math.Sin(ash.Angle);
-                    c.AnchorWorldX = ash.X + c.AnchorLocalX * cos - c.AnchorLocalY * sin;
-                    c.AnchorWorldY = ash.Y + c.AnchorLocalX * sin + c.AnchorLocalY * cos;
+                    else
+                        SetStraightAnchor(c, ash.X, ash.Y, ash.Angle);
                     LeashAndReport(c);
                 }
                 else if (c.AttachedWallId is { } wid && walls.TryGetValue(wid, out var aw))
                 {
-                    c.AnchorWorldX = aw.X + c.AnchorLocalX;
-                    c.AnchorWorldY = aw.Y + c.AnchorLocalY;
+                    SetStraightAnchor(c, aw.X, aw.Y, 0);   // walls are static + axis-aligned
                     LeashAndReport(c);
                 }
                 else
                 {
                     c.PullMass = 0;
+                    c.TetherPivots.Clear();
                 }
 
                 // A held wire end follows the (collision-resolved) cursor.
@@ -1261,6 +1343,8 @@ public class RoomState
             bodyByWall.Clear();
             bodyByShape.Clear();
             grabByUser.Clear();
+            wrapStack.Clear();
+            contactCorner.Clear();
             blocks.Clear();
             goals.Clear();
             walls.Clear();

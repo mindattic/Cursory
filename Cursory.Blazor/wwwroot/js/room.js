@@ -628,37 +628,49 @@ function drawSwitches() {
 }
 
 function drawAttachLines() {
-    // For each attached cursor draw the tether anchor → cursor. The anchor is server-provided
-    // in world space (c.anchorWorld*), so this is identical for a rotating block or a static
-    // wall — no body lookup or local-frame maths on the client.
+    // The tether is a server-provided polyline (anchor → wrapped corners → contact) in
+    // c.tetherPivots ([x0,y0,…]); we draw that chain, then the final segment contact → cursor.
+    // Works the same for a block, a wall, or a shape wrapped around several corners.
     for (const c of state.snapshot.cursors || []) {
-        if (!c.attachedBlockId && !c.attachedWallId && !c.attachedShapeId) continue;
-        const ax = c.anchorWorldX, ay = c.anchorWorldY;
+        const pv = c.tetherPivots;
+        if (!pv || pv.length < 2) continue;   // not grabbing
         const p = cursorRenderPos(c);
-        // Truncate at the max-force reach so an over-stretched pull reads as "maxed out".
-        const dx = p.x - ax, dy = p.y - ay;
+        const contactX = pv[pv.length - 2], contactY = pv[pv.length - 1];
+
+        // Wrapped chain (anchor → corners → contact).
+        ctx.strokeStyle = withAlpha(c.color, 0.7);
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(pv[0], pv[1]);
+        for (let i = 2; i < pv.length; i += 2) ctx.lineTo(pv[i], pv[i + 1]);
+        ctx.stroke();
+
+        // Final segment contact → cursor, truncated at the max-force reach.
+        const dx = p.x - contactX, dy = p.y - contactY;
         const dist = Math.hypot(dx, dy) || 1;
         const reach = Math.min(dist, MAX_PULL_PX);
-        const ex = ax + (dx / dist) * reach, ey = ay + (dy / dist) * reach;
+        const ex = contactX + (dx / dist) * reach, ey = contactY + (dy / dist) * reach;
         const maxed = dist > MAX_PULL_PX;
         ctx.strokeStyle = withAlpha(c.color, maxed ? 1 : 0.7);
         ctx.lineWidth = maxed ? 3 : 2;
         ctx.beginPath();
-        ctx.moveTo(ax, ay);
+        ctx.moveTo(contactX, contactY);
         ctx.lineTo(ex, ey);
         ctx.stroke();
-        // Anchor dot.
+
+        // Knot at the anchor and every wrapped corner.
         ctx.fillStyle = c.color;
-        ctx.beginPath();
-        ctx.arc(ax, ay, 4, 0, Math.PI * 2);
-        ctx.fill();
-        // Max-reach cap marker when pulling at full force.
+        for (let i = 0; i < pv.length; i += 2) {
+            ctx.beginPath();
+            ctx.arc(pv[i], pv[i + 1], 4, 0, Math.PI * 2);
+            ctx.fill();
+        }
         if (maxed) {
             ctx.beginPath();
             ctx.arc(ex, ey, 5, 0, Math.PI * 2);
             ctx.stroke();
         }
-        // Pull strength (mass-units) reported at the cursor end of the tether.
+        // Pull strength (mass-units) at the cursor end.
         if (typeof c.pullMass === 'number') {
             ctx.fillStyle = withAlpha(c.color, maxed ? 1 : 0.85);
             ctx.font = '600 16px system-ui';

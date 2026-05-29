@@ -265,6 +265,25 @@ public class RoomStateTests
         Assert.That(Math.Abs(b.Angle), Is.GreaterThan(0.3), $"wrapping should spin the body, angle={b.Angle}");
     }
 
+    /// <summary>When the cursor swings behind the body, the rope catches a corner — the tether
+    /// becomes a multi-point polyline (anchor → corner → contact) rather than a straight line.</summary>
+    [Test]
+    public void Segmented_tether_catches_a_corner_behind_the_body()
+    {
+        var room = new RoomState();
+        room.AddTestCursor("u1", CX, CY);
+        var b = Block("b", mass: 6, friction: 3.0, size: 200);   // heavy: holds still while we wrap it
+        room.AddBlock(b);
+        room.TryAttach("u1", "b", CX + 100, CY);                 // grab the right edge
+        room.GetCursor("u1")!.X = CX - 400;                      // swing the cursor behind, to the left
+        room.GetCursor("u1")!.Y = CY + 250;
+        room.Step();
+
+        // [anchorX, anchorY, cornerX, cornerY, …] — at least one wrapped corner ⇒ ≥ 4 entries.
+        Assert.That(room.GetCursor("u1")!.TetherPivots.Count, Is.GreaterThanOrEqualTo(4),
+            "rope should catch a corner when the cursor is behind the body");
+    }
+
     /// <summary>NaN / infinite cursor input must not poison the simulation.</summary>
     [Test]
     public void NaN_input_is_dropped()

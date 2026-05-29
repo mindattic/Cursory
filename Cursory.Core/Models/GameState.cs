@@ -47,6 +47,11 @@ public class CursorState
     /// a single grab's ceiling. A body moves once the pulls on it sum past its Mass. Shown at the
     /// tether end; 0 when not grabbing.</summary>
     public double PullMass { get; set; }
+    /// <summary>The tether polyline in world space, anchor → wrapped corners → contact, as flat
+    /// [x0,y0,x1,y1,…]. With a segmented tether the rope catches on corners and bends; the last
+    /// point is the contact (where force is applied, = <see cref="AnchorWorldX"/>/Y). The client
+    /// draws this chain then the final segment to the cursor. Empty when not grabbing.</summary>
+    public List<double> TetherPivots { get; set; } = [];
 }
 
 /// <summary>

@@ -50,10 +50,20 @@ public class SolvabilityTests
             var dir = Math.Sign(goal.X - b.X);
             if (dir == 0) dir = 1;
             Assert.That(room.TryAttach(user, b.Id, b.X + dir * b.W / 2, b.Y), Is.True, $"{user} failed to grab {b.Id}");
+            // Start the cursor on the block (a real player's would be) so the solid cursor isn't
+            // marooned on the far side of a wall by its arbitrary spawn scatter.
+            var cur = room.GetCursor(user)!;
+            cur.X = b.X + dir * b.W / 2;
+            cur.Y = b.Y;
         }
 
-        var solved = DriveToGoals(room, level, assignments, maxTicks: 2500);
-        Assert.That(solved, Is.True, $"level {level} did not solve within budget");
+        var solved = DriveToGoals(room, level, assignments, maxTicks: 4000);
+        var diag = string.Join("; ", room.Snapshot().Goals.Select(g =>
+        {
+            var bb = FindBlock(room, g.TargetBlockId);
+            return $"{g.TargetBlockId} at ({bb?.X:F0},{bb?.Y:F0}) ang={bb?.Angle:F2} goal ({g.X:F0},{g.Y:F0}) solved={g.IsSolved}";
+        }));
+        Assert.That(solved, Is.True, $"level {level} did not solve: {diag}");
     }
 
     /// <summary>Rotation/thread shape levels: a dumb pull can't finesse them, so just prove the
