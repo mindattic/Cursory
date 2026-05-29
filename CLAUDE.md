@@ -7,10 +7,11 @@ capped-force joint, so a heavy body needs two cursors pulling together and
 offset pulls genuinely rotate it.
 
 > **Physics: real rigid bodies via Aether.Physics2D (commit b12cec4).** The
-> earlier hand-rolled "sum-of-springs" kinematics with switch tiles, gated
-> doors and per-axis wall collision are gone. The current build is a 2-level
-> spike (`LevelCount = 2`) validating engine feel; levels 3–14 (preserved in
-> commit 541d39e) get re-ported onto the engine before their mechanics return.
+> earlier hand-rolled "sum-of-springs" kinematics with switch tiles and gated
+> doors are gone. Blocks, walls, and now compound **shapes** are all engine
+> bodies (`bodyByBlock`/`bodyByWall`/`bodyByShape`). `LevelCount = 3` (two block
+> levels + the first shape level); the rest of commit 541d39e's fourteen get
+> re-ported as the feel is locked. Switches/doors are still deferred.
 
 ## Repo shape
 
@@ -58,14 +59,26 @@ egress on a single node — fine for the App Service tier we'd target.
   separately (`InertiaKgPerMass`) so heft is independent of the threshold.
   `BlockState.StaticFriction` is now **unused** (reserved). Mass is printed on
   each block.
-- **Grabs anchor on the edge**: `TryAttach`/`TryAttachWall` project the click to
-  the nearest perimeter point (`ProjectToEdge`). Walls are grabbable too — static,
-  so the grab only tenses the tether. The anchor is sent as `CursorState.AnchorWorld*`
-  (world space, recomputed each tick) so the client needs no body-type maths;
-  `AnchorLocal*` and `Vx/Vy` are `[JsonIgnore]`d (server-internal).
-- **Solid cursor**: `SetCursorPosition` ejects the cursor from any wall AABB
-  (`ResolveOutOfWalls`); room.js mirrors it for feel. Raw click coords (not the
-  resolved cursor) drive grab picking, so you can still grab a wall edge.
+- **Grabs anchor on the edge**: `TryAttach`/`TryAttachShape`/`TryAttachWall`
+  project the click to the nearest perimeter point (`ProjectToEdge`; shapes pick
+  the nearest piece first). Walls are grabbable — static, so the grab only tenses
+  the tether. The anchor is sent as `CursorState.AnchorWorld*` (world space,
+  recomputed each tick) so the client needs no body-type maths; `AnchorLocal*`,
+  block `Vx/Vy`, and the shape's legacy dynamics fields are `[JsonIgnore]`d.
+- **Tether leash**: a grabbing cursor is held within `MaxPullPx` of its anchor
+  (`LeashAndReport`, server-authoritative; room.js mirrors it). The leash end is
+  exactly where pull saturates, so `CursorState.PullMass` (force ÷ ForcePerMass,
+  shown at the tether end) reads directly against the body's Mass.
+- **Solid cursor**: the pointer is a disc of radius `CursorRadius`, ejected from
+  wall AABBs and shape pieces (`ResolveOutOfWalls`/`ResolveOutOfShapes`, inflated
+  by the radius so a fast frame can't slip through). Server-authoritative in
+  `SetCursorPosition`; room.js (`clampCursor`) mirrors it. You never collide with
+  the shape you're holding, and raw click coords (not the resolved cursor) drive
+  grab picking, so you can still grab an edge.
+- **No extra RPCs**: grab/release/whistle/vote are one-shot client→server events;
+  the only 30 Hz call is `Move`. All physics, collision, and leash resolution are
+  server-side and broadcast in the single `Snapshot`, so every client sees the
+  same world.
 - **Password policy is strict; seeded users bypass it.** `SeedUser` writes the
   BCrypt hash directly and is idempotent. `CreateUser` enforces ≥ 8 chars,
   upper + lower + digit + special. The two seeded accounts (`gungreeneyes`,

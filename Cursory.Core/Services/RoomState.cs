@@ -34,6 +34,7 @@ public class RoomState
     private Body ground;                                  // FrictionJoint anchor
     private readonly Dictionary<string, Body> bodyByBlock = new();
     private readonly Dictionary<string, Body> bodyByWall = new();
+    private readonly Dictionary<string, Body> bodyByShape = new();
     private readonly Dictionary<string, FixedMouseJoint> grabByUser = new();
 
     /// <summary>World units (pixels) per simulation metre. 10 000-px world = 100 m; a 140-px
@@ -62,9 +63,14 @@ public class RoomState
     /// <summary>A single grab's pull ceiling in mass-units (GrabMaxForce ÷ ForcePerMass). One
     /// cursor can move anything below this; cooperating cursors stack toward N× it.</summary>
     public const double SingleGrabMaxMass = GrabMaxForce / ForcePerMass;
-    /// <summary>Tether length (world px) at which a pull saturates to <see cref="SingleGrabMaxMass"/>.
-    /// Matches room.js's MAX_PULL_PX so the rendered line and the reported number agree.</summary>
+    /// <summary>Tether length (world px) at which a pull saturates to <see cref="SingleGrabMaxMass"/>,
+    /// and the hard leash length — a tethered cursor can't get farther than this from its anchor,
+    /// so the tether end is exactly where max pull force is in effect. Matches room.js MAX_PULL_PX.</summary>
     private const double MaxPullPx = 240;
+    /// <summary>Cursor collision radius (world px). The pointer is a small disc, not a zero-size
+    /// point, so a fast 30 Hz frame can't land its centre exactly on a wall seam and slip through;
+    /// solids are inflated by this when ejecting. Small enough not to feel "fat".</summary>
+    private const double CursorRadius = 10;
 
     // ── state ─────────────────────────────────────────────────────────────────
     private readonly ConcurrentDictionary<string, CursorState> cursors = new();
@@ -72,13 +78,15 @@ public class RoomState
     private readonly ConcurrentDictionary<string, GoalZone> goals = new();
     private readonly ConcurrentDictionary<string, Wall> walls = new();
     private readonly ConcurrentDictionary<string, WorldLabel> labels = new();
+    private readonly ConcurrentDictionary<string, ShapeActor> shapes = new();
+    private readonly ConcurrentDictionary<string, ShapeGoal> shapeGoals = new();
     private readonly ConcurrentQueue<Whistle> whistles = new();
     private RoomVote? activeVote;
     private readonly Lock voteLock = new();
-    /// <summary>Total number of seeded levels. Drives the UI dropdown. The spike ships two
-    /// engine-backed Portal-style levels; the other twelve (commit 541d39e) get re-ported onto
-    /// the engine once the feel is locked.</summary>
-    public const int LevelCount = 2;
+    /// <summary>Total number of seeded levels. Drives the UI dropdown. Three are engine-backed
+    /// (two block levels + the first compound-shape level); the rest of commit 541d39e's fourteen
+    /// get re-ported onto the engine as the feel is locked.</summary>
+    public const int LevelCount = 3;
     private int currentLevel = 1;
     private readonly Lock levelLock = new();
     private const int WhistleRingCapacity = 256;
@@ -164,29 +172,66 @@ public class RoomState
         if (!IsFinite(x) || !IsFinite(y)) return true;
         x = Math.Clamp(x, 0, WorldGeometry.Width);
         y = Math.Clamp(y, 0, WorldGeometry.Height);
-        // Solid cursor: the pointer can't enter a wall — push it back to the nearest surface.
-        // The client resolves the same way for feel; this is the authoritative copy. (The raw
-        // click used for grabbing is separate, so you can still grab a wall's edge.)
-        (c.X, c.Y) = ResolveOutOfWalls(x, y);
+        // Solid cursor: the pointer disc can't enter a wall or another shape — push it back to
+        // the nearest surface. The client resolves the same way for feel; this is the authoritative
+        // copy every other client sees. (The raw click used for grabbing is separate, so you can
+        // still grab an edge; you don't collide with the shape you're currently holding.)
+        (x, y) = ResolveOutOfWalls(x, y);
+        (c.X, c.Y) = ResolveOutOfShapes(x, y, c.AttachedShapeId);
         c.LastInputTick = CurrentTick;
         return true;
     }
 
     private static bool IsFinite(double v) => !double.IsNaN(v) && !double.IsInfinity(v);
 
-    /// <summary>Push a point out of any wall it lands inside, along the shallowest axis (nearest
-    /// edge). Walls are axis-aligned, so this is a cheap AABB ejection; mirrors room.js.</summary>
+    /// <summary>Push the cursor disc out of any wall it overlaps, along the shallowest axis
+    /// (nearest edge). Walls are axis-aligned; the AABB is inflated by <see cref="CursorRadius"/>
+    /// so the disc — not just its centre — stays clear. Mirrors room.js.</summary>
     private (double X, double Y) ResolveOutOfWalls(double x, double y)
     {
         foreach (var w in walls.Values)
         {
-            var hw = w.W / 2;
-            var hh = w.H / 2;
+            var hw = w.W / 2 + CursorRadius;
+            var hh = w.H / 2 + CursorRadius;
             var dx = x - w.X;
             var dy = y - w.Y;
-            if (Math.Abs(dx) >= hw || Math.Abs(dy) >= hh) continue;   // outside this wall
+            if (Math.Abs(dx) >= hw || Math.Abs(dy) >= hh) continue;   // disc clear of this wall
             if (hw - Math.Abs(dx) < hh - Math.Abs(dy)) x = w.X + (dx >= 0 ? hw : -hw);
             else y = w.Y + (dy >= 0 ? hh : -hh);
+        }
+        return (x, y);
+    }
+
+    /// <summary>Push the cursor disc out of any shape piece it overlaps. Pieces are axis-aligned
+    /// boxes in the shape's body frame, so we rotate the point into that frame, do the inflated
+    /// AABB ejection there, and rotate back. <paramref name="skipShapeId"/> is the shape this
+    /// cursor is grabbing — never eject off your own grabbed body, that would fight the drag.</summary>
+    private (double X, double Y) ResolveOutOfShapes(double x, double y, string? skipShapeId)
+    {
+        foreach (var s in shapes.Values)
+        {
+            if (s.Id == skipShapeId) continue;
+            var cosN = Math.Cos(-s.Angle);
+            var sinN = Math.Sin(-s.Angle);
+            var dx = x - s.X;
+            var dy = y - s.Y;
+            var lx = dx * cosN - dy * sinN;
+            var ly = dx * sinN + dy * cosN;
+            foreach (var p in s.Pieces)
+            {
+                var hw = p.HalfW + CursorRadius;
+                var hh = p.HalfH + CursorRadius;
+                var px = lx - p.LocalX;
+                var py = ly - p.LocalY;
+                if (Math.Abs(px) >= hw || Math.Abs(py) >= hh) continue;
+                if (hw - Math.Abs(px) < hh - Math.Abs(py)) lx = p.LocalX + (px >= 0 ? hw : -hw);
+                else ly = p.LocalY + (py >= 0 ? hh : -hh);
+                var cosP = Math.Cos(s.Angle);
+                var sinP = Math.Sin(s.Angle);
+                x = s.X + lx * cosP - ly * sinP;
+                y = s.Y + lx * sinP + ly * cosP;
+                break;   // resolved against this shape; good enough for the disc
+            }
         }
         return (x, y);
     }
@@ -241,9 +286,67 @@ public class RoomState
         }
     }
 
-    /// <summary>Compound-shape grab. No shapes in the engine spike yet — accepted as a no-op
-    /// so the hub contract is preserved while levels 3–14 are re-ported.</summary>
-    public bool TryAttachShape(string userId, string shapeId, double clickX, double clickY) => false;
+    /// <summary>
+    /// Grab a compound shape on the edge of whichever piece is nearest the click. Same capped
+    /// <see cref="FixedMouseJoint"/> as a block — the shape is a real rigid body, so two cursors
+    /// pulling different pieces rotate and translate it together.
+    /// </summary>
+    public bool TryAttachShape(string userId, string shapeId, double clickX, double clickY)
+    {
+        if (!cursors.TryGetValue(userId, out var c)) return false;
+        if (!IsFinite(clickX) || !IsFinite(clickY)) return false;
+        lock (worldLock)
+        {
+            if (!shapes.TryGetValue(shapeId, out var s)) return false;
+            if (!bodyByShape.TryGetValue(shapeId, out var body)) return false;
+            DetachLocked(userId);
+
+            // World click → shape body-local frame.
+            var cosN = Math.Cos(-s.Angle);
+            var sinN = Math.Sin(-s.Angle);
+            var dx = clickX - s.X;
+            var dy = clickY - s.Y;
+            var lx = dx * cosN - dy * sinN;
+            var ly = dx * sinN + dy * cosN;
+
+            // Nearest piece (by clamped distance), then snap to that piece's edge.
+            ShapePiece? best = null;
+            double bestD = double.PositiveInfinity, bcx = 0, bcy = 0;
+            foreach (var p in s.Pieces)
+            {
+                var cx = Math.Clamp(lx, p.LocalX - p.HalfW, p.LocalX + p.HalfW);
+                var cy = Math.Clamp(ly, p.LocalY - p.HalfH, p.LocalY + p.HalfH);
+                var d = (cx - lx) * (cx - lx) + (cy - ly) * (cy - ly);
+                if (d < bestD) { bestD = d; best = p; bcx = cx; bcy = cy; }
+            }
+            if (best is null) return false;
+            var (ex, ey) = ProjectToEdge(bcx - best.LocalX, bcy - best.LocalY, best.HalfW, best.HalfH);
+            var localX = best.LocalX + ex;
+            var localY = best.LocalY + ey;
+
+            var cosP = Math.Cos(s.Angle);
+            var sinP = Math.Sin(s.Angle);
+            var anchorWX = s.X + localX * cosP - localY * sinP;
+            var anchorWY = s.Y + localX * sinP + localY * cosP;
+
+            var joint = new FixedMouseJoint(body, ToMVec(anchorWX, anchorWY))
+            {
+                MaxForce = GrabMaxForce,
+                Frequency = GrabFrequency,
+                DampingRatio = GrabDamping,
+            };
+            joint.WorldAnchorB = ToMVec(c.X, c.Y);
+            world.Add(joint);
+            grabByUser[userId] = joint;
+
+            c.AttachedBlockId = null;
+            c.AttachedWallId = null;
+            c.AttachedShapeId = shapeId;
+            c.AnchorLocalX = localX;
+            c.AnchorLocalY = localY;
+            return true;
+        }
+    }
 
     /// <summary>
     /// Anchor to a static wall at its nearest edge. The wall never moves, so there's no joint —
@@ -295,6 +398,24 @@ public class RoomState
         var dy = c.Y - c.AnchorWorldY;
         var frac = Math.Clamp(Math.Sqrt(dx * dx + dy * dy) / MaxPullPx, 0, 1);
         return SingleGrabMaxMass * frac;
+    }
+
+    /// <summary>Hold a tethered cursor at or inside the leash length (<see cref="MaxPullPx"/>) from
+    /// its anchor, then report its pull. The leash end is exactly where the pull saturates, so the
+    /// readout and the rendered tether agree. <see cref="CursorState.PullMass"/> is in mass-units
+    /// (force ÷ ForcePerMass) so it reads directly against the body's printed Mass; the newton
+    /// equivalent is PullMass × ForcePerMass.</summary>
+    private void LeashAndReport(CursorState c)
+    {
+        var dx = c.X - c.AnchorWorldX;
+        var dy = c.Y - c.AnchorWorldY;
+        var len = Math.Sqrt(dx * dx + dy * dy);
+        if (len > MaxPullPx && len > 1e-9)
+        {
+            c.X = c.AnchorWorldX + dx / len * MaxPullPx;
+            c.Y = c.AnchorWorldY + dy / len * MaxPullPx;
+        }
+        c.PullMass = PullMassFor(c);
     }
 
     /// <summary>Release whatever this cursor is holding.</summary>
@@ -548,6 +669,41 @@ public class RoomState
     internal void AddGoal(GoalZone g) => goals[g.Id] = g;
     /// <summary>Test/seed helper: add a world label.</summary>
     internal void AddLabel(WorldLabel l) => labels[l.Id] = l;
+    /// <summary>Test/seed helper: add a compound shape and its engine body.</summary>
+    internal void AddShape(ShapeActor s)
+    {
+        lock (worldLock) AddShapeLocked(s);
+    }
+
+    private void AddShapeLocked(ShapeActor s)
+    {
+        shapes[s.Id] = s;
+        var body = world.CreateBody(ToMVec(s.X, s.Y), (float)s.Angle, BodyType.Dynamic);
+        body.LinearDamping = LinearDamping;
+        body.AngularDamping = AngularDamping;
+
+        // One density across all pieces so the body's total mass = Mass × InertiaKgPerMass; the
+        // engine derives the (compound) moment of inertia from the fixture layout for free.
+        var totalAreaM2 = 0f;
+        foreach (var p in s.Pieces) totalAreaM2 += ToM(p.HalfW * 2) * ToM(p.HalfH * 2);
+        var density = totalAreaM2 > 1e-6f ? (float)s.Mass * InertiaKgPerMass / totalAreaM2 : 1f;
+        foreach (var p in s.Pieces)
+            body.CreateRectangle(ToM(p.HalfW * 2), ToM(p.HalfH * 2), density,
+                new Vector2(ToM(p.LocalX), ToM(p.LocalY)));
+
+        var linFric = (float)s.Mass * ForcePerMass;
+        var fric = new FrictionJoint(ground, body, body.WorldCenter, true)
+        {
+            MaxForce = linFric,
+            MaxTorque = linFric * FrictionTorqueScale,
+        };
+        world.Add(fric);
+
+        bodyByShape[s.Id] = body;
+    }
+
+    /// <summary>Test/seed helper: add a shape goal (pure data; solved-check runs in Step).</summary>
+    internal void AddShapeGoal(ShapeGoal g) => shapeGoals[g.Id] = g;
 
     /// <summary>Test helper: register a cursor at an explicit position.</summary>
     internal void AddTestCursor(string userId, double x, double y, string color = "#7F77DD")
@@ -573,8 +729,8 @@ public class RoomState
             Goals = goals.Values.Select(CloneGoal).ToList(),
             Switches = [],
             Doors = [],
-            Shapes = [],
-            ShapeGoals = [],
+            Shapes = shapes.Values.Select(CloneShape).ToList(),
+            ShapeGoals = shapeGoals.Values.Select(CloneShapeGoal).ToList(),
             Whistles = whistles.Where(w => tick - w.Tick < WhistleBroadcastTicks).Select(CloneWhistle).ToList(),
             Vote = CurrentVote,
             CurrentLevel = CurrentLevel,
@@ -609,6 +765,18 @@ public class RoomState
         Id = g.Id, X = g.X, Y = g.Y, W = g.W, H = g.H, TargetBlockId = g.TargetBlockId, IsSolved = g.IsSolved,
     };
     private static Wall CloneWall(Wall w) => new() { Id = w.Id, X = w.X, Y = w.Y, W = w.W, H = w.H };
+    private static ShapeActor CloneShape(ShapeActor s) => new()
+    {
+        Id = s.Id, X = s.X, Y = s.Y, Angle = s.Angle, Mass = s.Mass, Color = s.Color,
+        Pieces = s.Pieces.Select(p => new ShapePiece
+        {
+            LocalX = p.LocalX, LocalY = p.LocalY, HalfW = p.HalfW, HalfH = p.HalfH,
+        }).ToList(),
+    };
+    private static ShapeGoal CloneShapeGoal(ShapeGoal g) => new()
+    {
+        Id = g.Id, X = g.X, Y = g.Y, W = g.W, H = g.H, TargetShapeId = g.TargetShapeId, IsSolved = g.IsSolved,
+    };
     private static WorldLabel CloneLabel(WorldLabel l) => new()
     {
         Id = l.Id, X = l.X, Y = l.Y, Title = l.Title, Subtitle = l.Subtitle,
@@ -645,10 +813,17 @@ public class RoomState
                 b.Vx = ToPx(body.LinearVelocity.X);
                 b.Vy = ToPx(body.LinearVelocity.Y);
             }
+            foreach (var (id, body) in bodyByShape)
+            {
+                if (!shapes.TryGetValue(id, out var s)) continue;
+                s.X = ToPx(body.Position.X);
+                s.Y = ToPx(body.Position.Y);
+                s.Angle = body.Rotation;
+            }
 
-            // Tether anchor (world) + reported pull for every grabbing cursor, from the fresh
-            // body pose. Anchors are stored body-local so they ride a rotating block correctly;
-            // a wall is static so its anchor is fixed.
+            // Tether anchor (world) + leash + reported pull for every grabbing cursor, from the
+            // fresh body pose. Anchors are stored body-local so they ride a rotating body; a wall
+            // is static so its anchor is fixed.
             foreach (var c in cursors.Values)
             {
                 if (c.AttachedBlockId is { } bid && blocks.TryGetValue(bid, out var ab))
@@ -657,13 +832,21 @@ public class RoomState
                     var sin = Math.Sin(ab.Angle);
                     c.AnchorWorldX = ab.X + c.AnchorLocalX * cos - c.AnchorLocalY * sin;
                     c.AnchorWorldY = ab.Y + c.AnchorLocalX * sin + c.AnchorLocalY * cos;
-                    c.PullMass = PullMassFor(c);
+                    LeashAndReport(c);
+                }
+                else if (c.AttachedShapeId is { } sid && shapes.TryGetValue(sid, out var ash))
+                {
+                    var cos = Math.Cos(ash.Angle);
+                    var sin = Math.Sin(ash.Angle);
+                    c.AnchorWorldX = ash.X + c.AnchorLocalX * cos - c.AnchorLocalY * sin;
+                    c.AnchorWorldY = ash.Y + c.AnchorLocalX * sin + c.AnchorLocalY * cos;
+                    LeashAndReport(c);
                 }
                 else if (c.AttachedWallId is { } wid && walls.TryGetValue(wid, out var aw))
                 {
                     c.AnchorWorldX = aw.X + c.AnchorLocalX;
                     c.AnchorWorldY = aw.Y + c.AnchorLocalY;
-                    c.PullMass = PullMassFor(c);
+                    LeashAndReport(c);
                 }
                 else
                 {
@@ -678,6 +861,31 @@ public class RoomState
             g.IsSolved =
                 b.X > g.X - g.W / 2 && b.X < g.X + g.W / 2 &&
                 b.Y > g.Y - g.H / 2 && b.Y < g.Y + g.H / 2;
+        }
+
+        // A shape goal is satisfied only when every piece's world centre sits inside it — the
+        // whole shape has to be threaded in, not just its origin.
+        foreach (var g in shapeGoals.Values)
+        {
+            if (!shapes.TryGetValue(g.TargetShapeId, out var s) || s.Pieces.Count == 0)
+            {
+                g.IsSolved = false;
+                continue;
+            }
+            var cos = Math.Cos(s.Angle);
+            var sin = Math.Sin(s.Angle);
+            var solved = true;
+            foreach (var p in s.Pieces)
+            {
+                var wx = s.X + p.LocalX * cos - p.LocalY * sin;
+                var wy = s.Y + p.LocalX * sin + p.LocalY * cos;
+                if (wx <= g.X - g.W / 2 || wx >= g.X + g.W / 2 || wy <= g.Y - g.H / 2 || wy >= g.Y + g.H / 2)
+                {
+                    solved = false;
+                    break;
+                }
+            }
+            g.IsSolved = solved;
         }
 
         // Drop whistles older than the broadcast window so Snapshot's per-tick scan stays
@@ -697,6 +905,7 @@ public class RoomState
     {
         switch (currentLevel)
         {
+            case 3: SeedLevel3(); break;
             case 2: SeedLevel2(); break;
             default: SeedLevel1(); break;
         }
@@ -714,11 +923,14 @@ public class RoomState
             ground = world.CreateBody(Vector2.Zero, 0f, BodyType.Static);
             bodyByBlock.Clear();
             bodyByWall.Clear();
+            bodyByShape.Clear();
             grabByUser.Clear();
             blocks.Clear();
             goals.Clear();
             walls.Clear();
             labels.Clear();
+            shapes.Clear();
+            shapeGoals.Clear();
             foreach (var c in cursors.Values)
             {
                 c.AttachedBlockId = null;
@@ -785,6 +997,36 @@ public class RoomState
             Id = "L2-label", X = 5000, Y = 3500,
             Title = "Level 2 — Too heavy for one",
             Subtitle = "Mass 2: one cursor (max ~1.5) can't. Two of you grab edges and pull around the wall.",
+        };
+    }
+
+    /// <summary>
+    /// Level 3 — "Pivot the couch". The first engine-backed compound shape: an L the team has to
+    /// grab by the edges, rotate, and thread around a wall into the goal pad. A single cursor
+    /// (max pull ~1.5) can't beat its Mass; two cooperating cursors on different arms can pivot it.
+    /// </summary>
+    private void SeedLevel3()
+    {
+        const string shapeId = "L3-shape";
+        AddShapeLocked(new ShapeActor
+        {
+            Id = shapeId, X = 2800, Y = 5000, Mass = 2, Color = "#7FBF5A",
+            Pieces =
+            [
+                new ShapePiece { LocalX = 0,    LocalY = 0,    HalfW = 220, HalfH = 55 },   // long arm
+                new ShapePiece { LocalX = -165, LocalY = -165, HalfW = 55,  HalfH = 165 },  // short arm (the foot of the L)
+            ],
+        });
+        AddWallLocked(new Wall { Id = "L3-wall", X = 5000, Y = 5000, W = 180, H = 900 });
+        AddShapeGoal(new ShapeGoal
+        {
+            Id = "L3-goal", X = 7200, Y = 5000, W = 900, H = 900, TargetShapeId = shapeId,
+        });
+        labels["L3-label"] = new WorldLabel
+        {
+            Id = "L3-label", X = 5000, Y = 3300,
+            Title = "Level 3 — Pivot the couch",
+            Subtitle = "Grab the L's edges and route it around the wall onto the pad. Two cursors to turn it.",
         };
     }
 }

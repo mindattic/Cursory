@@ -190,16 +190,17 @@ public class ShapeActor
     public double Y { get; set; }
     /// <summary>Body-frame rotation in radians, anti-clockwise from world x-axis.</summary>
     public double Angle { get; set; }
-    public double Vx { get; set; }
-    public double Vy { get; set; }
-    /// <summary>Angular velocity in radians per tick.</summary>
-    public double AngVel { get; set; }
+    /// <summary>The shape's mass — drives inertia and the move-threshold the same way as a block:
+    /// the pulls on it must sum past this to break it free. Printed on the shape.</summary>
     public double Mass { get; set; } = 6;
-    /// <summary>Moment of inertia. Higher = harder to rotate. Computed from the pieces.</summary>
-    public double MomentOfInertia { get; set; } = 2_000_000;
-    public double StaticFriction { get; set; } = 1.2;
-    /// <summary>Rotational static-friction threshold. Net torque must exceed this to start rotating.</summary>
-    public double RotationalFriction { get; set; } = 200;
+    // Legacy pre-engine dynamics — the Aether body owns velocity/inertia/friction now, so these
+    // stay off the wire (kept on the record only so old level data still deserializes).
+    [JsonIgnore] public double Vx { get; set; }
+    [JsonIgnore] public double Vy { get; set; }
+    [JsonIgnore] public double AngVel { get; set; }
+    [JsonIgnore] public double MomentOfInertia { get; set; } = 2_000_000;
+    [JsonIgnore] public double StaticFriction { get; set; } = 1.2;
+    [JsonIgnore] public double RotationalFriction { get; set; } = 200;
     public string Color { get; set; } = "#7F77DD";
     public List<ShapePiece> Pieces { get; set; } = [];
 }

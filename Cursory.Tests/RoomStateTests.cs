@@ -186,6 +186,48 @@ public class RoomStateTests
             $"released block followed the cursor in Y: delta={b.Y - afterY}");
     }
 
+    /// <summary>A compound shape is a real engine body: the grab snaps to a piece edge, and a
+    /// light shape follows a single cursor.</summary>
+    [Test]
+    public void Shape_grab_anchors_on_edge_and_light_shape_moves()
+    {
+        var room = new RoomState();
+        room.AddTestCursor("u1", CX, CY);
+        var s = new ShapeActor
+        {
+            Id = "s", X = CX, Y = CY, Mass = 1, Color = "#7FBF5A",
+            Pieces = [new ShapePiece { LocalX = 0, LocalY = 0, HalfW = 150, HalfH = 50 }],
+        };
+        room.AddShape(s);
+        // Click just inside the top of the bar → anchor snaps up to the top edge (localY = -50).
+        room.TryAttachShape("u1", "s", CX + 10, CY - 40);
+
+        var c = room.GetCursor("u1")!;
+        Assert.That(c.AttachedShapeId, Is.EqualTo("s"));
+        Assert.That(c.AnchorLocalY, Is.EqualTo(-50).Within(1.0), "anchor snaps to the top edge");
+
+        room.GetCursor("u1")!.X = CX + 600;
+        for (var i = 0; i < 120; i++) room.Step();
+        Assert.That(s.X, Is.GreaterThan(CX + 30), $"light shape should follow the cursor, X={s.X}");
+    }
+
+    /// <summary>The leash holds a tethered cursor within the max tether length of its anchor.</summary>
+    [Test]
+    public void Tethered_cursor_is_leashed_to_max_length()
+    {
+        var room = new RoomState();
+        room.AddTestCursor("u1", CX, CY);
+        var b = Block("b", mass: 5, friction: 1.0, size: 200);   // heavy: won't move, so the anchor stays put
+        room.AddBlock(b);
+        room.TryAttach("u1", "b", CX + 100, CY);                 // grab the right edge
+        room.GetCursor("u1")!.X = CX + 5000;                     // yank far away
+        room.Step();
+
+        var c = room.GetCursor("u1")!;
+        var dist = Math.Sqrt((c.X - c.AnchorWorldX) * (c.X - c.AnchorWorldX) + (c.Y - c.AnchorWorldY) * (c.Y - c.AnchorWorldY));
+        Assert.That(dist, Is.LessThanOrEqualTo(241), $"cursor should be leashed to ~240 px, was {dist}");
+    }
+
     /// <summary>NaN / infinite cursor input must not poison the simulation.</summary>
     [Test]
     public void NaN_input_is_dropped()
@@ -218,10 +260,10 @@ public class RoomStateTests
         Assert.That(geom.Labels, Has.Some.Matches<WorldLabel>(l => l.Id == "L1-label"));
     }
 
-    /// <summary>The spike ships two engine-backed levels.</summary>
+    /// <summary>Three engine-backed levels so far: two block levels + the first shape level.</summary>
     [Test]
-    public void LevelCount_is_two_for_the_spike()
+    public void LevelCount_is_three()
     {
-        Assert.That(RoomState.LevelCount, Is.EqualTo(2));
+        Assert.That(RoomState.LevelCount, Is.EqualTo(3));
     }
 }

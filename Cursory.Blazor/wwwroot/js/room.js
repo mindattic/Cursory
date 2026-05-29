@@ -38,6 +38,7 @@ const state = {
     attachedBlockId: null,
     attachedShapeId: null,
     attachedWallId: null,
+    myTether: null,   // {x,y} world anchor of my own grab, for the client-side leash; null when free
     lastSent: 0,
     whistleAnims: [], // {x, y, color, t0}
     seenWhistles: new Map(), // "userId:tick" -> performance.now() first seen. A whistle rides
@@ -88,7 +89,7 @@ export async function start(opts) {
         // Raw world point (the hardware mouse) is used for picking — it can be over a wall even
         // though the rendered cursor is held at the wall's edge — so you can still grab a wall.
         const world = clientToWorld(e.clientX, e.clientY);
-        state.mouseWorld = resolveOutOfWalls({ x: world.x, y: world.y });
+        state.mouseWorld = clampCursor({ x: world.x, y: world.y });
         // Pick order: shape (on top) → block → wall → empty space (whistle/pan).
         const shapeHit = pickShape(world.x, world.y);
         if (shapeHit && connection) {
@@ -133,7 +134,7 @@ export async function start(opts) {
             state.cam.x = clamp(state.pan.ox - dx, 0, state.world.width);
             state.cam.y = clamp(state.pan.oy - dy, 0, state.world.height);
         }
-        state.mouseWorld = resolveOutOfWalls(clientToWorld(e.clientX, e.clientY));
+        state.mouseWorld = clampCursor(clientToWorld(e.clientX, e.clientY));
     };
     const onMouseUp = () => {
         if (state.pan.active) {
@@ -169,7 +170,7 @@ export async function start(opts) {
         const after = clientToWorld(e.clientX, e.clientY);
         state.cam.x = clamp(state.cam.x + (before.x - after.x), 0, state.world.width);
         state.cam.y = clamp(state.cam.y + (before.y - after.y), 0, state.world.height);
-        state.mouseWorld = resolveOutOfWalls(clientToWorld(e.clientX, e.clientY));
+        state.mouseWorld = clampCursor(clientToWorld(e.clientX, e.clientY));
     };
 
     // Losing window focus: a mouseup can land off-canvas and never reach us, leaving a pan or
@@ -305,6 +306,11 @@ export async function start(opts) {
         state.snapshot = snap;
         renderVote(snap.vote);
         syncLevelDropdown(snap.currentLevel, snap.levelCount);
+        // Cache my own grab anchor so the client-side leash can clamp my cursor to the tether
+        // length immediately (the server enforces the same thing authoritatively).
+        const me = (snap.cursors || []).find(c => c.userId === state.me.userId);
+        state.myTether = (me && (me.attachedBlockId || me.attachedShapeId || me.attachedWallId))
+            ? { x: me.anchorWorldX, y: me.anchorWorldY } : null;
         // Drive a local whistle anim for any whistles we didn't fire ourselves (others' clicks).
         // De-dup on a stable (userId, tick) key, not position+colour: the server rebroadcasts a
         // whistle for ~1 s but the ripple only lives 700 ms, so a position-match check would
@@ -388,7 +394,6 @@ function render(now) {
     drawBlocks();
     drawShapes();
     drawAttachLines();
-    drawShapeAttachLines();
     drawCursors();
     drawWhistles(now);
 
@@ -470,16 +475,58 @@ function cursorRenderPos(c) {
     return { x: c.x, y: c.y };
 }
 
-// Push a point out of any wall it lands inside (nearest-edge ejection) so the rendered cursor
-// can't penetrate solid walls. Mirrors RoomState.ResolveOutOfWalls; the server does the same to
-// the authoritative position. Mutates and returns the point.
+// The cursor is a small disc, not a point, so a fast frame can't slip its centre through a wall
+// seam. Solids are inflated by this when ejecting. Matches RoomState.CursorRadius.
+const CURSOR_RADIUS = 10;
+
+// Eject the cursor disc out of walls, then shapes, then hold it inside the tether leash. The
+// server does the same to the authoritative position; this is the immediate local copy. Mutates
+// and returns the point.
+function clampCursor(p) {
+    resolveOutOfWalls(p);
+    resolveOutOfShapes(p);
+    leashTether(p);
+    return p;
+}
 function resolveOutOfWalls(p) {
     for (const w of state.geometry.walls) {
-        const hw = w.w / 2, hh = w.h / 2;
+        const hw = w.w / 2 + CURSOR_RADIUS, hh = w.h / 2 + CURSOR_RADIUS;
         const dx = p.x - w.x, dy = p.y - w.y;
         if (Math.abs(dx) >= hw || Math.abs(dy) >= hh) continue;
         if (hw - Math.abs(dx) < hh - Math.abs(dy)) p.x = w.x + (dx >= 0 ? hw : -hw);
         else p.y = w.y + (dy >= 0 ? hh : -hh);
+    }
+    return p;
+}
+function resolveOutOfShapes(p) {
+    for (const s of state.snapshot.shapes || []) {
+        if (s.id === state.attachedShapeId) continue;   // never collide with the shape you hold
+        const cosN = Math.cos(-s.angle), sinN = Math.sin(-s.angle);
+        const dx = p.x - s.x, dy = p.y - s.y;
+        let lx = dx * cosN - dy * sinN, ly = dx * sinN + dy * cosN;
+        for (const pc of s.pieces || []) {
+            const hw = pc.halfW + CURSOR_RADIUS, hh = pc.halfH + CURSOR_RADIUS;
+            const px = lx - pc.localX, py = ly - pc.localY;
+            if (Math.abs(px) >= hw || Math.abs(py) >= hh) continue;
+            if (hw - Math.abs(px) < hh - Math.abs(py)) lx = pc.localX + (px >= 0 ? hw : -hw);
+            else ly = pc.localY + (py >= 0 ? hh : -hh);
+            const cosP = Math.cos(s.angle), sinP = Math.sin(s.angle);
+            p.x = s.x + lx * cosP - ly * sinP;
+            p.y = s.y + lx * sinP + ly * cosP;
+            break;
+        }
+    }
+    return p;
+}
+// Hold my cursor within the tether's max length of its anchor — the leash end is where max pull
+// applies, so you can't drag past full stretch.
+function leashTether(p) {
+    if (!state.myTether) return p;
+    const dx = p.x - state.myTether.x, dy = p.y - state.myTether.y;
+    const len = Math.hypot(dx, dy);
+    if (len > MAX_PULL_PX && len > 1e-9) {
+        p.x = state.myTether.x + dx / len * MAX_PULL_PX;
+        p.y = state.myTether.y + dy / len * MAX_PULL_PX;
     }
     return p;
 }
@@ -746,40 +793,14 @@ function drawShapes() {
         ctx.arc(0, 0, 4, 0, Math.PI * 2);
         ctx.fill();
         ctx.restore();
-    }
-}
-
-function drawShapeAttachLines() {
-    // Dotted pull line: anchor → cursor. Longer = harder pull. Visual cue mentioned
-    // in the design brief; doubles as a debug overlay so the spring force is legible.
-    const shapeById = new Map();
-    for (const s of state.snapshot.shapes || []) shapeById.set(s.id, s);
-    for (const c of state.snapshot.cursors || []) {
-        if (!c.attachedShapeId) continue;
-        const s = shapeById.get(c.attachedShapeId);
-        if (!s) continue;
-        const p = cursorRenderPos(c);
-        const cos = Math.cos(s.angle), sin = Math.sin(s.angle);
-        const ax = s.x + c.anchorLocalX * cos - c.anchorLocalY * sin;
-        const ay = s.y + c.anchorLocalX * sin + c.anchorLocalY * cos;
-        const dist = Math.hypot(p.x - ax, p.y - ay);
-        // Thicker + brighter as distance grows. Scaled so a ~150-unit pull is fully saturated.
-        const t = Math.min(1, dist / 200);
-        ctx.setLineDash([14, 10]);
-        ctx.lineDashOffset = -(performance.now() / 30) % 24;
-        ctx.strokeStyle = withAlpha(c.color, 0.35 + 0.55 * t);
-        ctx.lineWidth = 2 + 4 * t;
-        ctx.beginPath();
-        ctx.moveTo(ax, ay);
-        ctx.lineTo(p.x, p.y);
-        ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.lineDashOffset = 0;
-        // Anchor knob
-        ctx.fillStyle = c.color;
-        ctx.beginPath();
-        ctx.arc(ax, ay, 5, 0, Math.PI * 2);
-        ctx.fill();
+        // Mass, drawn upright at the body centre (same legible number as a block).
+        if (s.mass != null) {
+            ctx.fillStyle = 'rgba(255,255,255,0.92)';
+            ctx.font = '600 34px system-ui';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(String(s.mass), s.x, s.y);
+        }
     }
 }
 
