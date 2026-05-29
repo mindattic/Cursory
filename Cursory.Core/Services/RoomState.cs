@@ -80,6 +80,11 @@ public class RoomState
     private readonly ConcurrentDictionary<string, WorldLabel> labels = new();
     private readonly ConcurrentDictionary<string, ShapeActor> shapes = new();
     private readonly ConcurrentDictionary<string, ShapeGoal> shapeGoals = new();
+    private readonly ConcurrentDictionary<string, CircuitComponent> components = new();
+    private readonly ConcurrentDictionary<string, Terminal> terminals = new();
+    private readonly ConcurrentDictionary<string, Wire> wires = new();
+    /// <summary>World-px radius within which a released wire end snaps onto a terminal.</summary>
+    private const double WireSnapRadius = 90;
     private readonly ConcurrentQueue<Whistle> whistles = new();
     private RoomVote? activeVote;
     private readonly Lock voteLock = new();
@@ -435,6 +440,105 @@ public class RoomState
         }
     }
 
+    /// <summary>
+    /// Grab one end of a wire (0 = A, 1 = B). The end follows the cursor while held; picking it up
+    /// unplugs it from whatever terminal it was on. <see cref="Detach"/> snaps it to a nearby
+    /// terminal on release. This is how the electronics levels are wired.
+    /// </summary>
+    public bool TryAttachWireEnd(string userId, string wireId, int end, double clickX, double clickY)
+    {
+        if (!cursors.TryGetValue(userId, out var c)) return false;
+        lock (worldLock)
+        {
+            if (!wires.TryGetValue(wireId, out var w)) return false;
+            DetachLocked(userId);
+            c.AttachedWireId = wireId;
+            c.AttachedWireEnd = end == 1 ? 1 : 0;
+            if (c.AttachedWireEnd == 0) w.ATerminalId = null; else w.BTerminalId = null;
+            return true;
+        }
+    }
+
+    /// <summary>Snap a just-released wire end onto the nearest terminal within
+    /// <see cref="WireSnapRadius"/>, else leave it loose where the cursor dropped it.</summary>
+    private void SnapWireEnd(Wire w, int end)
+    {
+        var ex = end == 0 ? w.Ax : w.Bx;
+        var ey = end == 0 ? w.Ay : w.By;
+        Terminal? best = null;
+        var bestD = WireSnapRadius * WireSnapRadius;
+        foreach (var t in terminals.Values)
+        {
+            var d = (t.X - ex) * (t.X - ex) + (t.Y - ey) * (t.Y - ey);
+            if (d <= bestD) { bestD = d; best = t; }
+        }
+        if (best is null) return;
+        if (end == 0) { w.ATerminalId = best.Id; w.Ax = best.X; w.Ay = best.Y; }
+        else { w.BTerminalId = best.Id; w.Bx = best.X; w.By = best.Y; }
+    }
+
+    /// <summary>Bulb lights iff the wires + components form a closed loop battery+ → … → battery−
+    /// with both the resistor and the bulb in series (removing either internal edge breaks the
+    /// loop). A correct, minimal series-circuit check — the seed for breadboards later.</summary>
+    private void EvaluateCircuit()
+    {
+        var bulb = components.Values.FirstOrDefault(c => c.Kind == "bulb");
+        if (bulb is null) return;
+        var resistor = components.Values.FirstOrDefault(c => c.Kind == "resistor");
+        var posT = terminals.Values.FirstOrDefault(t => t.Polarity == "pos");
+        var negT = terminals.Values.FirstOrDefault(t => t.Polarity == "neg");
+        if (resistor is null || posT is null || negT is null
+            || bulb.TerminalIds.Count < 2 || resistor.TerminalIds.Count < 2)
+        {
+            bulb.Lit = false;
+            return;
+        }
+
+        var edges = new List<(string A, string B)>();
+        foreach (var w in wires.Values)
+            if (w.ATerminalId != null && w.BTerminalId != null)
+                edges.Add((w.ATerminalId, w.BTerminalId));
+        var bulbEdge = (bulb.TerminalIds[0], bulb.TerminalIds[1]);
+        var resEdge = (resistor.TerminalIds[0], resistor.TerminalIds[1]);
+        edges.Add(bulbEdge);
+        edges.Add(resEdge);
+
+        var connected = CircuitConnected(posT.Id, negT.Id, edges, null);
+        var bulbInSeries = connected && !CircuitConnected(posT.Id, negT.Id, edges, bulbEdge);
+        var resInSeries = connected && !CircuitConnected(posT.Id, negT.Id, edges, resEdge);
+        bulb.Lit = connected && bulbInSeries && resInSeries;
+    }
+
+    private static bool CircuitConnected(
+        string src, string dst, List<(string A, string B)> edges, (string A, string B)? exclude)
+    {
+        var adj = new Dictionary<string, List<string>>();
+        void Link(string a, string b)
+        {
+            if (!adj.TryGetValue(a, out var l)) { l = []; adj[a] = l; }
+            l.Add(b);
+        }
+        foreach (var (a, b) in edges)
+        {
+            if (exclude is { } ex && ((a == ex.A && b == ex.B) || (a == ex.B && b == ex.A))) continue;
+            Link(a, b);
+            Link(b, a);
+        }
+        if (src == dst) return true;
+        var seen = new HashSet<string> { src };
+        var q = new Queue<string>();
+        q.Enqueue(src);
+        while (q.Count > 0)
+        {
+            var n = q.Dequeue();
+            if (n == dst) return true;
+            if (adj.TryGetValue(n, out var ns))
+                foreach (var m in ns)
+                    if (seen.Add(m)) q.Enqueue(m);
+        }
+        return false;
+    }
+
     /// <summary>Clamp a body-local point into the box, then snap it to whichever of the four
     /// edges is nearest — i.e. the closest point on the perimeter. Grabs land on the rim.</summary>
     private static (double X, double Y) ProjectToEdge(double lx, double ly, double hw, double hh)
@@ -491,12 +595,15 @@ public class RoomState
     private void DetachLocked(string userId)
     {
         if (grabByUser.Remove(userId, out var joint))
-            world.Remove(joint);   // walls have no joint — only block grabs are in grabByUser
+            world.Remove(joint);   // walls/wires have no joint — only block/shape grabs are in grabByUser
         if (cursors.TryGetValue(userId, out var c))
         {
+            if (c.AttachedWireId is { } wid && wires.TryGetValue(wid, out var w))
+                SnapWireEnd(w, c.AttachedWireEnd);   // releasing a wire end plugs it into a nearby terminal
             c.AttachedBlockId = null;
             c.AttachedShapeId = null;
             c.AttachedWallId = null;
+            c.AttachedWireId = null;
             c.PullMass = 0;
         }
     }
@@ -768,6 +875,14 @@ public class RoomState
 
     /// <summary>Test/seed helper: add a shape goal (pure data; solved-check runs in Step).</summary>
     internal void AddShapeGoal(ShapeGoal g) => shapeGoals[g.Id] = g;
+    /// <summary>Test/seed helper: add a circuit component.</summary>
+    internal void AddComponent(CircuitComponent c) => components[c.Id] = c;
+    /// <summary>Test/seed helper: add a terminal.</summary>
+    internal void AddTerminal(Terminal t) => terminals[t.Id] = t;
+    /// <summary>Test/seed helper: add a wire.</summary>
+    internal void AddWire(Wire w) => wires[w.Id] = w;
+    /// <summary>Read a component by id (live reference) — test helper for the circuit eval.</summary>
+    internal CircuitComponent? GetComponent(string id) => components.TryGetValue(id, out var c) ? c : null;
 
     /// <summary>Test helper: register a cursor at an explicit position.</summary>
     internal void AddTestCursor(string userId, double x, double y, string color = "#7F77DD")
@@ -795,6 +910,9 @@ public class RoomState
             Doors = [],
             Shapes = shapes.Values.Select(CloneShape).ToList(),
             ShapeGoals = shapeGoals.Values.Select(CloneShapeGoal).ToList(),
+            Components = components.Values.Select(CloneComponent).ToList(),
+            Terminals = terminals.Values.Select(CloneTerminal).ToList(),
+            Wires = wires.Values.Select(CloneWire).ToList(),
             Whistles = whistles.Where(w => tick - w.Tick < WhistleBroadcastTicks).Select(CloneWhistle).ToList(),
             Vote = CurrentVote,
             CurrentLevel = CurrentLevel,
@@ -816,6 +934,7 @@ public class RoomState
         UserId = c.UserId, DisplayName = c.DisplayName, Color = c.Color, ConnectionId = c.ConnectionId,
         X = c.X, Y = c.Y, LastInputTick = c.LastInputTick,
         AttachedBlockId = c.AttachedBlockId, AttachedShapeId = c.AttachedShapeId, AttachedWallId = c.AttachedWallId,
+        AttachedWireId = c.AttachedWireId, AttachedWireEnd = c.AttachedWireEnd,
         AnchorLocalX = c.AnchorLocalX, AnchorLocalY = c.AnchorLocalY,
         AnchorWorldX = c.AnchorWorldX, AnchorWorldY = c.AnchorWorldY, PullMass = c.PullMass,
     };
@@ -840,6 +959,17 @@ public class RoomState
     private static ShapeGoal CloneShapeGoal(ShapeGoal g) => new()
     {
         Id = g.Id, X = g.X, Y = g.Y, W = g.W, H = g.H, TargetShapeId = g.TargetShapeId, IsSolved = g.IsSolved,
+    };
+    private static CircuitComponent CloneComponent(CircuitComponent c) => new()
+    {
+        Id = c.Id, Kind = c.Kind, X = c.X, Y = c.Y, W = c.W, H = c.H, Lit = c.Lit, Label = c.Label,
+        TerminalIds = [.. c.TerminalIds],
+    };
+    private static Terminal CloneTerminal(Terminal t) => new() { Id = t.Id, X = t.X, Y = t.Y, Polarity = t.Polarity };
+    private static Wire CloneWire(Wire w) => new()
+    {
+        Id = w.Id, Color = w.Color, Ax = w.Ax, Ay = w.Ay, Bx = w.Bx, By = w.By,
+        ATerminalId = w.ATerminalId, BTerminalId = w.BTerminalId,
     };
     private static WorldLabel CloneLabel(WorldLabel l) => new()
     {
@@ -916,7 +1046,16 @@ public class RoomState
                 {
                     c.PullMass = 0;
                 }
+
+                // A held wire end follows the (collision-resolved) cursor.
+                if (c.AttachedWireId is { } heldWireId && wires.TryGetValue(heldWireId, out var hw))
+                {
+                    if (c.AttachedWireEnd == 0) { hw.Ax = c.X; hw.Ay = c.Y; }
+                    else { hw.Bx = c.X; hw.By = c.Y; }
+                }
             }
+
+            EvaluateCircuit();   // light the bulb when the loop is complete (no-op if no circuit)
         }
 
         foreach (var g in goals.Values)
@@ -1006,6 +1145,9 @@ public class RoomState
             labels.Clear();
             shapes.Clear();
             shapeGoals.Clear();
+            components.Clear();
+            terminals.Clear();
+            wires.Clear();
             foreach (var c in cursors.Values)
             {
                 c.AttachedBlockId = null;
@@ -1290,28 +1432,51 @@ public class RoomState
         };
     }
 
-    /// <summary>Level 14 — "Long thread". The headline: a long L threaded through a tight gap into
-    /// the goal. Rotate and translate together — patience and two cursors.</summary>
+    /// <summary>
+    /// Level 14 — "Light the bulb". The first electronics puzzle: drag the loose wire ends onto
+    /// terminals to build a series loop battery+ → resistor → bulb → battery−. The resistor must be
+    /// in the loop (it "tames" the current) and the bulb in series, or it stays dark. Six terminals
+    /// and three wires split naturally between two players. The seed for breadboards / a potato clock.
+    /// </summary>
     private void SeedLevel14()
     {
-        const string id = "L14-shape";
-        AddShapeLocked(new ShapeActor
+        // Battery (left), with + post on top and − on bottom.
+        AddTerminal(new Terminal { Id = "bat+", X = 3000, Y = 4650, Polarity = "pos" });
+        AddTerminal(new Terminal { Id = "bat-", X = 3000, Y = 5350, Polarity = "neg" });
+        AddComponent(new CircuitComponent
         {
-            Id = id, X = 2800, Y = 5000, Mass = 2.0, Color = "#D85A30",
-            Pieces =
-            [
-                new ShapePiece { LocalX = 0,    LocalY = 0,    HalfW = 260, HalfH = 70 },
-                new ShapePiece { LocalX = -190, LocalY = -190, HalfW = 70,  HalfH = 190 },
-            ],
+            Id = "battery", Kind = "battery", X = 3000, Y = 5000, W = 360, H = 900,
+            Label = "Battery", TerminalIds = ["bat+", "bat-"],
         });
-        AddWallLocked(new Wall { Id = "L14-wt", X = 5000, Y = 3050, W = 90, H = 3400 });   // gap from y4750
-        AddWallLocked(new Wall { Id = "L14-wb", X = 5000, Y = 6950, W = 90, H = 3400 });   // to y5250 (500 tall)
-        AddShapeGoal(new ShapeGoal { Id = "L14-goal", X = 7200, Y = 5000, W = 1600, H = 1600, TargetShapeId = id });
+
+        // Resistor (top middle), two terminals left/right.
+        AddTerminal(new Terminal { Id = "r-a", X = 4700, Y = 3900 });
+        AddTerminal(new Terminal { Id = "r-b", X = 5300, Y = 3900 });
+        AddComponent(new CircuitComponent
+        {
+            Id = "resistor", Kind = "resistor", X = 5000, Y = 3900, W = 700, H = 200,
+            Label = "Resistor", TerminalIds = ["r-a", "r-b"],
+        });
+
+        // Bulb (right), two terminals left/right.
+        AddTerminal(new Terminal { Id = "b-a", X = 6500, Y = 4400 });
+        AddTerminal(new Terminal { Id = "b-b", X = 7100, Y = 4400 });
+        AddComponent(new CircuitComponent
+        {
+            Id = "bulb", Kind = "bulb", X = 6800, Y = 4400, W = 360, H = 360,
+            Label = "Bulb", TerminalIds = ["b-a", "b-b"],
+        });
+
+        // Three loose wires, laid out low so both players can grab an end each.
+        AddWire(new Wire { Id = "w1", Color = "#d98a3d", Ax = 3400, Ay = 6100, Bx = 3900, By = 6100 });
+        AddWire(new Wire { Id = "w2", Color = "#caa472", Ax = 4600, Ay = 6300, Bx = 5100, By = 6300 });
+        AddWire(new Wire { Id = "w3", Color = "#8fb3d9", Ax = 5800, Ay = 6100, Bx = 6300, By = 6100 });
+
         labels["L14-label"] = new WorldLabel
         {
             Id = "L14-label", X = 5000, Y = 2900,
-            Title = "Level 14 — Long thread",
-            Subtitle = "A meaner L through a meaner gap. Rotate, line it up, and thread it together.",
+            Title = "Level 14 — Light the bulb",
+            Subtitle = "Drag the wire ends onto the posts: battery + → resistor → bulb → battery −. Light it up.",
         };
     }
 }

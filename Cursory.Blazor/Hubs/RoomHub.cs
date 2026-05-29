@@ -88,6 +88,15 @@ public class RoomHub : Hub
         return Task.CompletedTask;
     }
 
+    /// <summary>Grab one end of a wire (end 0 = A, 1 = B) to drag it onto a terminal.</summary>
+    public Task GrabWireEnd(string wireId, int end, double x, double y)
+    {
+        var userId = Context.User?.FindFirst("UserId")?.Value;
+        if (string.IsNullOrEmpty(userId)) return Task.CompletedTask;
+        room.TryAttachWireEnd(userId, wireId, end, x, y);
+        return Task.CompletedTask;
+    }
+
     /// <summary>Mouse up — detach this cursor.</summary>
     public Task Release()
     {

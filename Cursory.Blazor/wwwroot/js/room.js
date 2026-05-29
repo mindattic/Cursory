@@ -41,6 +41,8 @@ const state = {
     attachedBlockId: null,
     attachedShapeId: null,
     attachedWallId: null,
+    attachedWireId: null,   // wire end I'm dragging (circuit levels)
+    attachedWireEnd: 0,
     myTether: null,   // {x,y} world anchor of my own grab, for the client-side leash; null when free
     lastSent: 0,
     whistleAnims: [], // {x, y, color, t0}
@@ -83,10 +85,11 @@ export async function start(opts) {
     let armed = null;   // { startX, startY, startT, worldX, worldY }
 
     const releaseGrab = () => {
-        if ((state.attachedBlockId || state.attachedShapeId || state.attachedWallId) && connection) {
+        if ((state.attachedBlockId || state.attachedShapeId || state.attachedWallId || state.attachedWireId) && connection) {
             state.attachedBlockId = null;
             state.attachedShapeId = null;
             state.attachedWallId = null;
+            state.attachedWireId = null;
             connection.invoke('Release').catch(noop);
         }
     };
@@ -102,6 +105,13 @@ export async function start(opts) {
         // Raw world point (the real mouse) for picking; the rendered cursor is the clamped copy.
         const world = clientToWorld(e.clientX, e.clientY);
         state.mouseWorld = clampCursor({ x: world.x, y: world.y });
+        // Wire ends sit on top (circuit levels) — grab one to drag it onto a terminal.
+        const wireHit = pickWireEnd(world.x, world.y);
+        if (wireHit && connection) {
+            state.attachedWireId = wireHit.id; state.attachedWireEnd = wireHit.end;
+            connection.invoke('GrabWireEnd', wireHit.id, wireHit.end, world.x, world.y).catch(noop);
+            return;
+        }
         const shapeHit = pickShape(world.x, world.y);
         if (shapeHit && connection) { state.attachedShapeId = shapeHit.id; connection.invoke('GrabShape', shapeHit.id, world.x, world.y).catch(noop); return; }
         const hit = pickBlock(world.x, world.y);
@@ -353,20 +363,9 @@ export async function stop() {
 }
 
 function loop(now) {
-    followCamera();
     sendInput(now);
     render(now);
     raf = requestAnimationFrame(loop);
-}
-
-// While tethered, ease the camera toward the cursor so the action stays centred — you focus on
-// the object you're pulling without fighting the pan. Manual drag-pan takes over when you let go.
-function followCamera() {
-    if (state.paused) return;
-    if (!(state.attachedBlockId || state.attachedShapeId || state.attachedWallId)) return;
-    const k = 0.08;
-    state.cam.x = clamp(state.cam.x + (state.mouseWorld.x - state.cam.x) * k, 0, state.world.width);
-    state.cam.y = clamp(state.cam.y + (state.mouseWorld.y - state.cam.y) * k, 0, state.world.height);
 }
 
 function sendInput(now) {
@@ -398,6 +397,7 @@ function render(now) {
     drawDoors();
     drawBlocks();
     drawShapes();
+    drawCircuit();
     drawAttachLines();
     drawCursors();
     drawWhistles(now);
@@ -841,6 +841,123 @@ function drawShapes() {
             ctx.fillText(String(s.mass), s.x, s.y);
         }
     }
+}
+
+// Circuit levels: components (battery/resistor/bulb), terminals, and the wires the players route.
+function drawCircuit() {
+    const snap = state.snapshot;
+    if ((!snap.components || !snap.components.length) && (!snap.wires || !snap.wires.length)) return;
+
+    for (const comp of snap.components || []) drawComponent(comp);
+
+    // Terminals as posts; brighter when a held wire end is hovering close enough to snap.
+    for (const t of snap.terminals || []) {
+        let near = false;
+        if (state.attachedWireId) {
+            const d = Math.hypot(state.mouseWorld.x - t.x, state.mouseWorld.y - t.y);
+            near = d < 90;
+        }
+        ctx.fillStyle = t.polarity === 'pos' ? '#e0564f' : t.polarity === 'neg' ? '#5b8def' : 'rgba(220,220,220,0.9)';
+        ctx.beginPath();
+        ctx.arc(t.x, t.y, near ? 16 : 11, 0, Math.PI * 2);
+        ctx.fill();
+        if (near) { ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = 3; ctx.stroke(); }
+        if (t.polarity) {
+            ctx.fillStyle = 'rgba(255,255,255,0.95)';
+            ctx.font = '600 28px system-ui';
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.fillText(t.polarity === 'pos' ? '+' : '−', t.x, t.y - 34);
+        }
+    }
+
+    // Wires. A held end follows my live cursor (prediction); the rest come from the snapshot.
+    for (const w of snap.wires || []) {
+        let ax = w.ax, ay = w.ay, bx = w.bx, by = w.by;
+        if (state.attachedWireId === w.id) {
+            if (state.attachedWireEnd === 0) { ax = state.mouseWorld.x; ay = state.mouseWorld.y; }
+            else { bx = state.mouseWorld.x; by = state.mouseWorld.y; }
+        }
+        ctx.strokeStyle = w.color || '#caa472';
+        ctx.lineWidth = 7;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(ax, ay); ctx.lineTo(bx, by);
+        ctx.stroke();
+        for (const [ex, ey, plugged] of [[ax, ay, w.aTerminalId], [bx, by, w.bTerminalId]]) {
+            ctx.fillStyle = plugged ? w.color || '#caa472' : '#2a2a2a';
+            ctx.strokeStyle = w.color || '#caa472';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.arc(ex, ey, 10, 0, Math.PI * 2);
+            ctx.fill(); ctx.stroke();
+        }
+    }
+    ctx.lineCap = 'butt';
+}
+
+function drawComponent(comp) {
+    const x = comp.x, y = comp.y, hw = comp.w / 2, hh = comp.h / 2;
+    ctx.textAlign = 'center';
+    if (comp.kind === 'bulb') {
+        const r = Math.min(hw, hh);
+        // Glow when lit.
+        if (comp.lit) {
+            const g = ctx.createRadialGradient(x, y, r * 0.3, x, y, r * 2.4);
+            g.addColorStop(0, 'rgba(255,231,120,0.55)');
+            g.addColorStop(1, 'rgba(255,231,120,0)');
+            ctx.fillStyle = g;
+            ctx.beginPath(); ctx.arc(x, y, r * 2.4, 0, Math.PI * 2); ctx.fill();
+        }
+        ctx.fillStyle = comp.lit ? '#ffe06a' : '#3a3a40';
+        ctx.strokeStyle = comp.lit ? '#fff3b0' : 'rgba(255,255,255,0.3)';
+        ctx.lineWidth = 4;
+        ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        // Filament cross.
+        ctx.strokeStyle = comp.lit ? 'rgba(120,80,0,0.7)' : 'rgba(255,255,255,0.25)';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(x - r * 0.4, y); ctx.lineTo(x, y - r * 0.4); ctx.lineTo(x + r * 0.4, y);
+        ctx.stroke();
+    } else if (comp.kind === 'resistor') {
+        ctx.fillStyle = '#5a4a2a';
+        ctx.strokeStyle = '#caa472';
+        ctx.lineWidth = 3;
+        ctx.fillRect(x - hw, y - hh, comp.w, comp.h);
+        ctx.strokeRect(x - hw, y - hh, comp.w, comp.h);
+        // Zig-zag.
+        ctx.strokeStyle = '#e0c89a';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        const n = 6, step = comp.w / n;
+        ctx.moveTo(x - hw, y);
+        for (let i = 0; i < n; i++) ctx.lineTo(x - hw + step * (i + 0.5), y + (i % 2 ? hh * 0.6 : -hh * 0.6));
+        ctx.lineTo(x + hw, y);
+        ctx.stroke();
+    } else { // battery
+        ctx.fillStyle = '#2f3a2f';
+        ctx.strokeStyle = '#7FBF5A';
+        ctx.lineWidth = 4;
+        ctx.fillRect(x - hw, y - hh, comp.w, comp.h);
+        ctx.strokeRect(x - hw, y - hh, comp.w, comp.h);
+    }
+    // Label below the component.
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.font = '22px system-ui';
+    ctx.textBaseline = 'top';
+    ctx.fillText(comp.label || '', x, y + hh + 10);
+}
+
+function pickWireEnd(wx, wy) {
+    // Nearest wire endpoint within grab radius. Endpoints draw at r=10; give a generous 40 px.
+    const R2 = 40 * 40;
+    let best = null, bestD = R2;
+    for (const w of state.snapshot.wires || []) {
+        const da = (w.ax - wx) ** 2 + (w.ay - wy) ** 2;
+        if (da <= bestD) { bestD = da; best = { id: w.id, end: 0 }; }
+        const db = (w.bx - wx) ** 2 + (w.by - wy) ** 2;
+        if (db <= bestD) { bestD = db; best = { id: w.id, end: 1 }; }
+    }
+    return best;
 }
 
 function pickShape(wx, wy) {

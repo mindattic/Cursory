@@ -29,6 +29,10 @@ public class CursorState
     /// grab just tenses the tether (the cursor rotates toward the anchor); mutually exclusive
     /// with the other two.</summary>
     public string? AttachedWallId { get; set; }
+    /// <summary>Wire whose end this cursor is dragging, if any, and which end (0 = A, 1 = B). The
+    /// end follows the cursor; releasing snaps it onto a nearby terminal.</summary>
+    public string? AttachedWireId { get; set; }
+    public int AttachedWireEnd { get; set; }
     /// <summary>Anchor in the body's local space (server-internal). For blocks/walls, local =
     /// the un-rotated offset from the body centre to the grabbed edge point. Kept off the wire —
     /// the client draws from <see cref="AnchorWorldX"/>/<see cref="AnchorWorldY"/>.</summary>
@@ -265,6 +269,9 @@ public class CircuitComponent
     /// <summary>True when a complete series circuit is lighting this bulb. Bulb only.</summary>
     public bool Lit { get; set; }
     public string Label { get; set; } = "";
+    /// <summary>The terminals on this component. For resistor/bulb the two ids are the component's
+    /// internal edge (current flows through it); for the battery they're the +/- posts.</summary>
+    public List<string> TerminalIds { get; set; } = [];
 }
 
 /// <summary>A connection point on a component. Wires snap their ends onto these. Polarity is set
@@ -346,6 +353,9 @@ public class WorldSnapshot
     public List<Door> Doors { get; set; } = [];
     public List<ShapeActor> Shapes { get; set; } = [];
     public List<ShapeGoal> ShapeGoals { get; set; } = [];
+    public List<CircuitComponent> Components { get; set; } = [];
+    public List<Terminal> Terminals { get; set; } = [];
+    public List<Wire> Wires { get; set; } = [];
     public List<Whistle> Whistles { get; set; } = [];
     /// <summary>The active room vote (reset or level-switch), if any. Null when none.</summary>
     public RoomVote? Vote { get; set; }

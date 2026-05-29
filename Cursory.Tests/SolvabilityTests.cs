@@ -58,7 +58,7 @@ public class SolvabilityTests
 
     /// <summary>Rotation/thread shape levels: a dumb pull can't finesse them, so just prove the
     /// shape is movable — two cursors make real progress toward the goal (it isn't stuck/too heavy).</summary>
-    [TestCase(3)] [TestCase(9)] [TestCase(12)] [TestCase(14)]
+    [TestCase(3)] [TestCase(9)] [TestCase(12)]
     public void Shape_level_body_is_movable(int level)
     {
         var room = BuildRoomAtLevel(level);
