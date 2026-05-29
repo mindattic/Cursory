@@ -368,6 +368,9 @@ public class WorldSnapshot
     public int CurrentLevel { get; set; }
     /// <summary>How many levels exist; the UI dropdown is built from this.</summary>
     public int LevelCount { get; set; }
+    /// <summary>Room-wide physics toggles, mirrored so every client's menu shows the live state.</summary>
+    public bool CursorCollision { get; set; }
+    public bool SegmentedTether { get; set; }
 }
 
 /// <summary>

@@ -32,6 +32,10 @@
                     }
                 </select>
             </label>
+            <div class="room-pause-toggles">
+                <label class="room-pause-check"><input type="checkbox" id="room-toggle-collision" /> Cursor collision</label>
+                <label class="room-pause-check"><input type="checkbox" id="room-toggle-rope" /> Segmented rope physics</label>
+            </div>
             <button id="room-reset-btn" type="button" class="room-pause-btn">Restart level</button>
             <form method="post" action="/api/auth/logout" class="room-pause-logout">
                 <AntiforgeryToken />

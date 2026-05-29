@@ -228,17 +228,32 @@ public class RoomStateTests
         Assert.That(dist, Is.LessThanOrEqualTo(301), $"cursor should be leashed to ~300 px, was {dist}");
     }
 
-    /// <summary>The cursor is a free pointer — it passes through walls and tracks the mouse 1:1
-    /// (collision was for the abandoned pointer-lock model and trapped it against geometry).</summary>
+    /// <summary>With collision on (the default), a cursor landing inside a wall is nudged out to a
+    /// surface — but it isn't swept-blocked, so it can still cross (a point past the wall lands there).</summary>
     [Test]
-    public void Cursor_passes_freely_through_walls()
+    public void Cursor_is_nudged_out_of_a_wall_when_collision_on()
     {
-        var room = new RoomState();
-        room.AddTestCursor("u1", 1800, 2000);
-        room.AddWall(new Wall { Id = "w", X = 2000, Y = 2000, W = 60, H = 2000 });
-        room.SetCursorPosition("u1", 2600, 2000);   // straight across the wall, in one move
+        var room = new RoomState();   // CursorCollision defaults true
+        room.AddTestCursor("u1", 1500, 2000);
+        room.AddWall(new Wall { Id = "w", X = 2000, Y = 2000, W = 400, H = 400 });
+        room.SetCursorPosition("u1", 2000, 2000);   // dead centre of the wall
+        var c = room.GetCursor("u1")!;
+        Assert.That(Math.Abs(c.X - 2000) > 190 || Math.Abs(c.Y - 2000) > 190, Is.True,
+            $"cursor should be nudged out of the wall, was ({c.X:F0},{c.Y:F0})");
 
-        Assert.That(room.GetCursor("u1")!.X, Is.EqualTo(2600).Within(0.5), "cursor follows the mouse through the wall");
+        room.SetCursorPosition("u1", 2600, 2000);   // a point past the wall — lands there (no sweep block)
+        Assert.That(room.GetCursor("u1")!.X, Is.EqualTo(2600).Within(0.5));
+    }
+
+    /// <summary>With collision off, the cursor is a free pointer and passes through walls.</summary>
+    [Test]
+    public void Cursor_passes_through_walls_when_collision_off()
+    {
+        var room = new RoomState { CursorCollision = false };
+        room.AddTestCursor("u1", 1500, 2000);
+        room.AddWall(new Wall { Id = "w", X = 2000, Y = 2000, W = 400, H = 400 });
+        room.SetCursorPosition("u1", 2000, 2000);   // inside the wall — stays, no collision
+        Assert.That(room.GetCursor("u1")!.X, Is.EqualTo(2000).Within(0.5));
     }
 
     /// <summary>With the segmented tether on, orbiting the cursor around a light body wraps the

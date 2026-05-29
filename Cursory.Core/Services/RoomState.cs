@@ -83,6 +83,11 @@ public class RoomState
     /// toggle); read on the physics thread, so backed by a volatile field.</summary>
     private volatile bool segmentedTether = false;
     public bool SegmentedTether { get => segmentedTether; set => segmentedTether = value; }
+    /// <summary>Room-wide toggle for cursor-vs-wall/shape collision (default on). When on, the
+    /// pointer is nudged out of solids (no swept blocking, so it can still cross — it just can't
+    /// rest inside one); off = a free pointer that passes through. Volatile (read on the tick).</summary>
+    private volatile bool cursorCollision = true;
+    public bool CursorCollision { get => cursorCollision; set => cursorCollision = value; }
 
     // ── state ─────────────────────────────────────────────────────────────────
     private readonly ConcurrentDictionary<string, CursorState> cursors = new();
@@ -188,12 +193,18 @@ public class RoomState
     {
         if (!cursors.TryGetValue(userId, out var c)) return false;
         if (!IsFinite(x) || !IsFinite(y)) return true;
-        // The cursor is a free pointer: it tracks the player's mouse 1:1, clamped only to the
-        // world bounds. (It does NOT collide with walls/shapes — that was for the abandoned
-        // pointer-lock model and trapped the pointer against geometry. Grabbing/wrapping still
-        // works; the rope catches corners on the body, not the cursor.)
-        c.X = Math.Clamp(x, 0, WorldGeometry.Width);
-        c.Y = Math.Clamp(y, 0, WorldGeometry.Height);
+        x = Math.Clamp(x, 0, WorldGeometry.Width);
+        y = Math.Clamp(y, 0, WorldGeometry.Height);
+        // Cursor collision (toggleable): nudge the pointer out of any wall/shape it lands inside.
+        // No swept blocking — it can still cross solids (the in-between mouse points just get
+        // pushed to the surface), it simply can't rest inside one. Off = free pointer.
+        if (cursorCollision)
+        {
+            (x, y) = ResolveOutOfWalls(x, y);
+            (x, y) = ResolveOutOfShapes(x, y);
+        }
+        c.X = x;
+        c.Y = y;
         c.LastInputTick = CurrentTick;
         return true;
     }
@@ -1116,6 +1127,8 @@ public class RoomState
             Vote = CurrentVote,
             CurrentLevel = CurrentLevel,
             LevelCount = LevelCount,
+            CursorCollision = cursorCollision,
+            SegmentedTether = segmentedTether,
         };
     }
 

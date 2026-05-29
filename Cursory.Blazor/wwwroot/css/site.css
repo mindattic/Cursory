@@ -345,6 +345,9 @@ html, body {
     font-size: 13px;
 }
 .room-pause-btn:hover { background: rgba(255,255,255,0.06); }
+.room-pause-toggles { display: flex; flex-direction: column; gap: 8px; text-align: left; }
+.room-pause-check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: rgba(255,255,255,0.8); cursor: pointer; }
+.room-pause-check input { accent-color: #7F77DD; cursor: pointer; }
 
 .room-hud-logout { margin-left: 0; }
 .room-hud-logout button {

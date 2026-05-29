@@ -36,6 +36,8 @@ const state = {
     // — when it leaves we stop drawing our arrow (so it isn't left frozen), and recapture on re-entry.
     paused: false,
     pointerOver: true,
+    cursorCollision: true,   // room-wide toggles, synced from the snapshot
+    segmentedTether: false,
     // Static geometry — populated once via the "Geometry" message on hub connect.
     geometry: { walls: [], labels: [] },
     // Per-tick dynamic snapshot.
@@ -261,6 +263,8 @@ export async function start(opts) {
         contextMenu:  document.getElementById('room-context-menu'),
         pause:        document.getElementById('room-pause'),
         pauseResume:  document.getElementById('room-pause-resume'),
+        toggleColl:   document.getElementById('room-toggle-collision'),
+        toggleRope:   document.getElementById('room-toggle-rope'),
     };
 
     // HUD wiring — Reset button + level dropdown + vote overlay.
@@ -276,11 +280,15 @@ export async function start(opts) {
     const onVoteYes = () => { if (connection) connection.invoke('CastVote', true).catch(noop); };
     const onVoteNo  = () => { if (connection) connection.invoke('CastVote', false).catch(noop); };
     const onResume  = () => setPaused(false);   // close the pause menu, back to play
+    const onToggleColl = (e) => { if (connection) connection.invoke('SetCursorCollision', e.target.checked).catch(noop); };
+    const onToggleRope = (e) => { if (connection) connection.invoke('SetSegmentedTether', e.target.checked).catch(noop); };
     if (resetBtn)    resetBtn.addEventListener('click', onResetClick);
     if (levelSelect) levelSelect.addEventListener('change', onLevelChange);
     if (voteYesBtn)  voteYesBtn.addEventListener('click', onVoteYes);
     if (voteNoBtn)   voteNoBtn.addEventListener('click', onVoteNo);
     if (els.pauseResume) els.pauseResume.addEventListener('click', onResume);
+    if (els.toggleColl)  els.toggleColl.addEventListener('change', onToggleColl);
+    if (els.toggleRope)  els.toggleRope.addEventListener('change', onToggleRope);
 
     detachListeners = () => {
         canvas.removeEventListener('mousedown', onMouseDown);
@@ -297,6 +305,8 @@ export async function start(opts) {
         window.removeEventListener('keydown', onKeyDown);
         if (els.contextMenu) els.contextMenu.removeEventListener('click', onMenuClick);
         if (els.pauseResume) els.pauseResume.removeEventListener('click', onResume);
+        if (els.toggleColl)  els.toggleColl.removeEventListener('change', onToggleColl);
+        if (els.toggleRope)  els.toggleRope.removeEventListener('change', onToggleRope);
         window.removeEventListener('resize', resize);
         if (resetBtn)    resetBtn.removeEventListener('click', onResetClick);
         if (levelSelect) levelSelect.removeEventListener('change', onLevelChange);
@@ -329,6 +339,11 @@ export async function start(opts) {
         const me = (snap.cursors || []).find(c => c.userId === state.me.userId);
         state.myTether = (me && (me.attachedBlockId || me.attachedShapeId || me.attachedWallId))
             ? { x: me.anchorWorldX, y: me.anchorWorldY } : null;
+        // Mirror the room-wide physics toggles + reflect them in the menu checkboxes.
+        state.cursorCollision = !!snap.cursorCollision;
+        state.segmentedTether = !!snap.segmentedTether;
+        if (els.toggleColl) els.toggleColl.checked = state.cursorCollision;
+        if (els.toggleRope) els.toggleRope.checked = state.segmentedTether;
         // Drive a local whistle anim for any whistles we didn't fire ourselves (others' clicks).
         // De-dup on a stable (userId, tick) key, not position+colour: the server rebroadcasts a
         // whistle for ~1 s but the ripple only lives 700 ms, so a position-match check would
@@ -502,10 +517,11 @@ const CURSOR_RADIUS = 10;
 // Eject the cursor disc out of walls, then shapes, then hold it inside the tether leash. The
 // server does the same to the authoritative position; this is the immediate local copy. Mutates
 // and returns the point.
-// The cursor is a free pointer: it tracks the hardware mouse 1:1. The only constraint is the
-// tether leash while you're grabbing (you can't pull past the rope's max length). It does NOT
-// collide with walls/shapes — that trapped the pointer against geometry on level load.
+// Constrain the rendered cursor. The tether leash always applies while grabbing; wall/shape
+// collision (nudge out of solids, no swept blocking so it can still cross) applies only when the
+// room-wide CursorCollision toggle is on.
 function clampCursor(p) {
+    if (state.cursorCollision) { resolveOutOfWalls(p); resolveOutOfShapes(p); }
     leashTether(p);
     return p;
 }

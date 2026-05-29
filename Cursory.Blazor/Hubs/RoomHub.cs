@@ -141,4 +141,18 @@ public class RoomHub : Hub
         room.CastVote(userId, yes);
         return Task.CompletedTask;
     }
+
+    /// <summary>Toggle room-wide cursor-vs-wall/shape collision.</summary>
+    public Task SetCursorCollision(bool on)
+    {
+        if (Context.User?.FindFirst("UserId")?.Value is { Length: > 0 }) room.CursorCollision = on;
+        return Task.CompletedTask;
+    }
+
+    /// <summary>Toggle the room-wide multi-segment wrapping tether.</summary>
+    public Task SetSegmentedTether(bool on)
+    {
+        if (Context.User?.FindFirst("UserId")?.Value is { Length: > 0 }) room.SegmentedTether = on;
+        return Task.CompletedTask;
+    }
 }
