@@ -69,12 +69,15 @@ egress on a single node — fine for the App Service tier we'd target.
   (`LeashAndReport`, server-authoritative; room.js mirrors it). The leash end is
   exactly where pull saturates, so `CursorState.PullMass` (force ÷ ForcePerMass,
   shown at the tether end) reads directly against the body's Mass.
-- **Solid cursor**: the pointer is a disc of radius `CursorRadius`, ejected from
-  wall AABBs and shape pieces (`ResolveOutOfWalls`/`ResolveOutOfShapes`, inflated
-  by the radius so a fast frame can't slip through). Server-authoritative in
-  `SetCursorPosition`; room.js (`clampCursor`) mirrors it. You never collide with
-  the shape you're holding, and raw click coords (not the resolved cursor) drive
-  grab picking, so you can still grab an edge.
+- **Solid cursor**: the pointer is a disc of radius `CursorRadius`. Each frame
+  `SetCursorPosition` first **sweeps** the path from the previous position and
+  stops at the first wall surface crossed (`SweepCursorAgainstWalls` — slab
+  segment/AABB), so even a fast jump can't tunnel a thin wall; then it disc-ejects
+  from walls and shape pieces (`ResolveOutOfWalls`/`ResolveOutOfShapes`, inflated
+  by the radius). Server-authoritative; room.js (`clampCursor`/`sweepWalls`)
+  mirrors it for feel. You never collide with the shape you're holding, and raw
+  click coords (not the resolved cursor) drive grab picking, so you can still grab
+  an edge.
 - **No extra RPCs**: grab/release/whistle/vote are one-shot client→server events;
   the only 30 Hz call is `Move`. All physics, collision, and leash resolution are
   server-side and broadcast in the single `Snapshot`, so every client sees the

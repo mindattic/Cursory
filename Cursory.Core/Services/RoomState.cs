@@ -66,7 +66,7 @@ public class RoomState
     /// <summary>Tether length (world px) at which a pull saturates to <see cref="SingleGrabMaxMass"/>,
     /// and the hard leash length — a tethered cursor can't get farther than this from its anchor,
     /// so the tether end is exactly where max pull force is in effect. Matches room.js MAX_PULL_PX.</summary>
-    private const double MaxPullPx = 240;
+    private const double MaxPullPx = 300;
     /// <summary>Cursor collision radius (world px). The pointer is a small disc, not a zero-size
     /// point, so a fast 30 Hz frame can't land its centre exactly on a wall seam and slip through;
     /// solids are inflated by this when ejecting. Small enough not to feel "fat".</summary>
@@ -172,10 +172,11 @@ public class RoomState
         if (!IsFinite(x) || !IsFinite(y)) return true;
         x = Math.Clamp(x, 0, WorldGeometry.Width);
         y = Math.Clamp(y, 0, WorldGeometry.Height);
-        // Solid cursor: the pointer disc can't enter a wall or another shape — push it back to
-        // the nearest surface. The client resolves the same way for feel; this is the authoritative
-        // copy every other client sees. (The raw click used for grabbing is separate, so you can
-        // still grab an edge; you don't collide with the shape you're currently holding.)
+        // Solid cursor (authoritative — every client sees this copy). First sweep the path from
+        // the previous position so a fast frame can't tunnel through a thin wall, then disc-eject
+        // from walls and other shapes at the stopped point. The raw click used for grabbing is
+        // separate, so you can still grab an edge; you don't collide with the shape you hold.
+        (x, y) = SweepCursorAgainstWalls(c.X, c.Y, x, y);
         (x, y) = ResolveOutOfWalls(x, y);
         (c.X, c.Y) = ResolveOutOfShapes(x, y, c.AttachedShapeId);
         c.LastInputTick = CurrentTick;
@@ -200,6 +201,68 @@ public class RoomState
             else y = w.Y + (dy >= 0 ? hh : -hh);
         }
         return (x, y);
+    }
+
+    /// <summary>Sweep the cursor disc from its previous position to the requested one and stop it
+    /// at the first wall surface the path crosses — so a fast frame can't tunnel through a thin
+    /// wall between ticks (the static disc ejection only checks the endpoint). Walls are inflated
+    /// by <see cref="CursorRadius"/>; returns the earliest contact point, else the target.</summary>
+    private (double X, double Y) SweepCursorAgainstWalls(double x0, double y0, double x1, double y1)
+    {
+        var dx = x1 - x0;
+        var dy = y1 - y0;
+        var bestT = 1.0;
+        foreach (var w in walls.Values)
+        {
+            var minX = w.X - w.W / 2 - CursorRadius;
+            var maxX = w.X + w.W / 2 + CursorRadius;
+            var minY = w.Y - w.H / 2 - CursorRadius;
+            var maxY = w.Y + w.H / 2 + CursorRadius;
+            // If we started inside this inflated box, the static eject handles it — don't sweep.
+            if (x0 > minX && x0 < maxX && y0 > minY && y0 < maxY) continue;
+            if (TrySegmentAabbEntry(x0, y0, dx, dy, minX, minY, maxX, maxY, out var t) && t < bestT)
+                bestT = t;
+        }
+        return (x0 + dx * bestT, y0 + dy * bestT);
+    }
+
+    /// <summary>Slab-method segment/AABB entry time. True (with <paramref name="tEnter"/> in
+    /// [0,1]) if the segment (x0,y0)→(x0+dx,y0+dy) first enters the box within its length.</summary>
+    private static bool TrySegmentAabbEntry(
+        double x0, double y0, double dx, double dy,
+        double minX, double minY, double maxX, double maxY, out double tEnter)
+    {
+        tEnter = 0;
+        double tmin = 0, tmax = 1;
+        if (Math.Abs(dx) < 1e-9)
+        {
+            if (x0 < minX || x0 > maxX) return false;
+        }
+        else
+        {
+            var t1 = (minX - x0) / dx;
+            var t2 = (maxX - x0) / dx;
+            if (t1 > t2) (t1, t2) = (t2, t1);
+            tmin = Math.Max(tmin, t1);
+            tmax = Math.Min(tmax, t2);
+            if (tmin > tmax) return false;
+        }
+        if (Math.Abs(dy) < 1e-9)
+        {
+            if (y0 < minY || y0 > maxY) return false;
+        }
+        else
+        {
+            var t1 = (minY - y0) / dy;
+            var t2 = (maxY - y0) / dy;
+            if (t1 > t2) (t1, t2) = (t2, t1);
+            tmin = Math.Max(tmin, t1);
+            tmax = Math.Min(tmax, t2);
+            if (tmin > tmax) return false;
+        }
+        if (tmin < 0 || tmin > 1) return false;
+        tEnter = tmin;
+        return true;
     }
 
     /// <summary>Push the cursor disc out of any shape piece it overlaps. Pieces are axis-aligned
@@ -1017,10 +1080,12 @@ public class RoomState
                 new ShapePiece { LocalX = -165, LocalY = -165, HalfW = 55,  HalfH = 165 },  // short arm (the foot of the L)
             ],
         });
-        AddWallLocked(new Wall { Id = "L3-wall", X = 5000, Y = 5000, W = 180, H = 900 });
+        // Shorter wall + roomier goal than the first cut: enough of an obstacle to force a route
+        // around, but the L (and a rotation) still clears it comfortably above or below.
+        AddWallLocked(new Wall { Id = "L3-wall", X = 5000, Y = 5000, W = 180, H = 700 });
         AddShapeGoal(new ShapeGoal
         {
-            Id = "L3-goal", X = 7200, Y = 5000, W = 900, H = 900, TargetShapeId = shapeId,
+            Id = "L3-goal", X = 7200, Y = 5000, W = 1000, H = 1000, TargetShapeId = shapeId,
         });
         labels["L3-label"] = new WorldLabel
         {

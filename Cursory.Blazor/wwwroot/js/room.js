@@ -483,9 +483,40 @@ const CURSOR_RADIUS = 10;
 // server does the same to the authoritative position; this is the immediate local copy. Mutates
 // and returns the point.
 function clampCursor(p) {
+    sweepWalls(p);          // stop at a wall the path crossed (anti-tunnel), from the last position
     resolveOutOfWalls(p);
     resolveOutOfShapes(p);
     leashTether(p);
+    return p;
+}
+// Sweep from the previous cursor position to p and stop at the first wall surface crossed, so a
+// fast mouse jump can't tunnel through a thin wall locally (server sweeps authoritatively too).
+function sweepWalls(p) {
+    const x0 = state.mouseWorld.x, y0 = state.mouseWorld.y;
+    const dx = p.x - x0, dy = p.y - y0;
+    let bestT = 1;
+    for (const w of state.geometry.walls) {
+        const minX = w.x - w.w / 2 - CURSOR_RADIUS, maxX = w.x + w.w / 2 + CURSOR_RADIUS;
+        const minY = w.y - w.h / 2 - CURSOR_RADIUS, maxY = w.y + w.h / 2 + CURSOR_RADIUS;
+        if (x0 > minX && x0 < maxX && y0 > minY && y0 < maxY) continue;   // started inside; static eject handles it
+        let tmin = 0, tmax = 1;
+        if (Math.abs(dx) < 1e-9) { if (x0 < minX || x0 > maxX) continue; }
+        else {
+            let t1 = (minX - x0) / dx, t2 = (maxX - x0) / dx;
+            if (t1 > t2) { const s = t1; t1 = t2; t2 = s; }
+            tmin = Math.max(tmin, t1); tmax = Math.min(tmax, t2);
+            if (tmin > tmax) continue;
+        }
+        if (Math.abs(dy) < 1e-9) { if (y0 < minY || y0 > maxY) continue; }
+        else {
+            let t1 = (minY - y0) / dy, t2 = (maxY - y0) / dy;
+            if (t1 > t2) { const s = t1; t1 = t2; t2 = s; }
+            tmin = Math.max(tmin, t1); tmax = Math.min(tmax, t2);
+            if (tmin > tmax) continue;
+        }
+        if (tmin >= 0 && tmin <= 1 && tmin < bestT) bestT = tmin;
+    }
+    if (bestT < 1) { p.x = x0 + dx * bestT; p.y = y0 + dy * bestT; }
     return p;
 }
 function resolveOutOfWalls(p) {
@@ -533,7 +564,7 @@ function leashTether(p) {
 
 // The rendered pull line stops at the distance where a grab hits its max force, so a
 // player can read how hard they're pulling: past MAX_PULL_PX, pulling farther adds no force.
-const MAX_PULL_PX = 240;
+const MAX_PULL_PX = 300;
 
 function drawWalls() {
     for (const w of state.geometry.walls) {

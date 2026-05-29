@@ -225,7 +225,21 @@ public class RoomStateTests
 
         var c = room.GetCursor("u1")!;
         var dist = Math.Sqrt((c.X - c.AnchorWorldX) * (c.X - c.AnchorWorldX) + (c.Y - c.AnchorWorldY) * (c.Y - c.AnchorWorldY));
-        Assert.That(dist, Is.LessThanOrEqualTo(241), $"cursor should be leashed to ~240 px, was {dist}");
+        Assert.That(dist, Is.LessThanOrEqualTo(301), $"cursor should be leashed to ~300 px, was {dist}");
+    }
+
+    /// <summary>A single fast jump across a thin wall is stopped at the surface, not tunnelled —
+    /// the swept test catches the crossing the per-point eject would miss.</summary>
+    [Test]
+    public void Cursor_does_not_tunnel_through_a_thin_wall()
+    {
+        var room = new RoomState();
+        room.AddTestCursor("u1", 1800, 2000);                              // left of the wall
+        room.AddWall(new Wall { Id = "w", X = 2000, Y = 2000, W = 60, H = 2000 });  // thin vertical wall
+        room.SetCursorPosition("u1", 2600, 2000);                          // jump to the far side in one frame
+
+        var c = room.GetCursor("u1")!;
+        Assert.That(c.X, Is.LessThan(1970), $"cursor must stop at the wall, not tunnel through; X={c.X}");
     }
 
     /// <summary>NaN / infinite cursor input must not poison the simulation.</summary>
