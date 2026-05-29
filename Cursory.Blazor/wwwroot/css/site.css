@@ -241,6 +241,49 @@ html, body {
 
 .room-hud-hint { color: rgba(255,255,255,0.4); font-size: 12px; letter-spacing: 0.5px; }
 
+/* Reconnect modal — dark. Hidden until Blazor adds a state class. */
+#components-reconnect-modal { display: none; }
+#components-reconnect-modal.components-reconnect-show,
+#components-reconnect-modal.components-reconnect-failed,
+#components-reconnect-modal.components-reconnect-rejected {
+    display: flex;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.7);
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+.reconnect-card {
+    background: #1a1a1a;
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 12px;
+    padding: 26px 34px;
+    color: rgba(255,255,255,0.85);
+    text-align: center;
+    box-shadow: 0 24px 70px rgba(0,0,0,0.7);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+    font-size: 14px;
+}
+.reconnect-card a { color: #9b93ff; }
+.reconnect-spinner {
+    width: 34px; height: 34px;
+    border: 3px solid rgba(127,119,221,0.25);
+    border-top-color: #7F77DD;
+    border-radius: 50%;
+    animation: reconnect-spin 0.9s linear infinite;
+}
+@keyframes reconnect-spin { to { transform: rotate(360deg); } }
+/* Show the message matching the current state; hide the others. */
+.reconnect-text .reconnect-failed, .reconnect-text .reconnect-rejected { display: none; }
+.components-reconnect-failed .reconnect-default, .components-reconnect-rejected .reconnect-default { display: none; }
+.components-reconnect-failed .reconnect-failed { display: inline; }
+.components-reconnect-rejected .reconnect-rejected { display: inline; }
+.components-reconnect-rejected .reconnect-spinner { display: none; }
+
 /* Level dropdown — dark mode (default OS styling renders white-on-light, unreadable here). */
 #room-level-select {
     background: #1a1a1a;

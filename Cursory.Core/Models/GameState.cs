@@ -248,6 +248,54 @@ public class ShapeGoal
 }
 
 /// <summary>
+/// A circuit component (battery, resistor, or bulb) — the building blocks of the electronics
+/// levels. Purely visual on the server except the bulb's <see cref="Lit"/>, which the circuit
+/// evaluator drives. The real connectivity lives in <see cref="Terminal"/>s + <see cref="Wire"/>s;
+/// this is the box drawn around a component's terminals. Foundation for later breadboards.
+/// </summary>
+public class CircuitComponent
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    /// <summary>"battery" | "resistor" | "bulb" — drives how the client renders it.</summary>
+    public string Kind { get; set; } = "";
+    public double X { get; set; }
+    public double Y { get; set; }
+    public double W { get; set; }
+    public double H { get; set; }
+    /// <summary>True when a complete series circuit is lighting this bulb. Bulb only.</summary>
+    public bool Lit { get; set; }
+    public string Label { get; set; } = "";
+}
+
+/// <summary>A connection point on a component. Wires snap their ends onto these. Polarity is set
+/// for the battery's two posts ("pos"/"neg"); other terminals leave it empty.</summary>
+public class Terminal
+{
+    public string Id { get; set; } = "";
+    public double X { get; set; }
+    public double Y { get; set; }
+    public string Polarity { get; set; } = "";   // "pos" | "neg" | ""
+}
+
+/// <summary>
+/// A wire with two draggable ends. A cursor grabs an end and drags it; releasing near a terminal
+/// snaps the end onto it (records <see cref="ATerminalId"/>/<see cref="BTerminalId"/>). When the
+/// wires + components form a closed series loop battery+ → resistor → bulb → battery−, the bulb lights.
+/// </summary>
+public class Wire
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string Color { get; set; } = "#caa472";
+    public double Ax { get; set; }
+    public double Ay { get; set; }
+    public double Bx { get; set; }
+    public double By { get; set; }
+    /// <summary>Terminal each end is plugged into, or null if the end is loose.</summary>
+    public string? ATerminalId { get; set; }
+    public string? BTerminalId { get; set; }
+}
+
+/// <summary>
 /// What a successful vote does when it passes. <see cref="Reset"/> re-seeds the currently
 /// loaded level; <see cref="SelectLevel"/> switches to <see cref="RoomVote.TargetLevel"/>.
 /// </summary>

@@ -29,13 +29,11 @@ const state = {
     me: { userId: '', displayName: '', color: '#7F77DD' },
     world: { width: 10000, height: 10000 },
     cam: { x: 5000, y: 5000, z: 1 },
+    pan: { active: false, sx: 0, sy: 0, ox: 0, oy: 0 },
     mouseWorld: { x: 5000, y: 5000 },
-    // Pointer-lock model: the hardware cursor is captured + hidden; vcursor is a virtual cursor
-    // in CSS px within the canvas, driven by raw movement deltas and clamped to the viewport so it
-    // can never leave. `locked` = pointer captured (playing); `paused` = released, pause menu up.
-    locked: false,
-    paused: true,
-    vcursor: { x: 0, y: 0 },
+    // ESC toggles the pause menu. The cursor is the free OS mouse (rendered as our own arrow);
+    // empty-space drag pans, and while you're tethered the camera eases to follow your cursor.
+    paused: false,
     // Static geometry — populated once via the "Geometry" message on hub connect.
     geometry: { walls: [], labels: [] },
     // Per-tick dynamic snapshot.
@@ -77,14 +75,13 @@ export async function start(opts) {
         }
     };
 
-    // A "click" (whistle) barely moves the captured cursor and is released quickly. Panning is
-    // edge-pan (see edgePan), not drag, since under pointer lock there's no absolute position.
+    // Click-vs-drag: an empty-space mousedown arms a pending whistle + pan. Past DRAG_THRESHOLD_PX
+    // we commit to a pan and cancel the whistle; a quick release fires the whistle.
+    const DRAG_THRESHOLD_PX = 5;
     const CLICK_MAX_MS = 250;
-    const CLICK_MOVE_PX = 6;
     const ZOOM_MIN = 0.1, ZOOM_MAX = 4;
-    let armed = null;   // pending whistle: { t0, worldX, worldY, moved }
+    let armed = null;   // { startX, startY, startT, worldX, worldY }
 
-    const requestLock = () => { try { canvas.requestPointerLock(); } catch (e) { /* ignore */ } };
     const releaseGrab = () => {
         if ((state.attachedBlockId || state.attachedShapeId || state.attachedWallId) && connection) {
             state.attachedBlockId = null;
@@ -93,67 +90,81 @@ export async function start(opts) {
             connection.invoke('Release').catch(noop);
         }
     };
-    // ESC releases the lock (browser default) → this fires → pause. Resume re-locks.
-    const onPointerLockChange = () => {
-        state.locked = (document.pointerLockElement === canvas);
-        state.paused = !state.locked;
-        if (els.pause) els.pause.toggleAttribute('hidden', !state.paused);
-        if (state.paused) { hideContextMenu(); armed = null; releaseGrab(); }
+    const setPaused = (p) => {
+        state.paused = p;
+        if (els.pause) els.pause.toggleAttribute('hidden', !p);
+        if (p) { hideContextMenu(); armed = null; state.pan.active = false; releaseGrab(); }
     };
 
     const onMouseDown = (e) => {
-        if (e.button !== 0) return;
-        if (!state.locked) { requestLock(); return; }   // first click captures the cursor
+        if (e.button !== 0 || state.paused) return;     // left button only; menu open → ignore
         ensureAudio();
-        const world = state.mouseWorld;                 // virtual-cursor world position
+        // Raw world point (the real mouse) for picking; the rendered cursor is the clamped copy.
+        const world = clientToWorld(e.clientX, e.clientY);
+        state.mouseWorld = clampCursor({ x: world.x, y: world.y });
         const shapeHit = pickShape(world.x, world.y);
         if (shapeHit && connection) { state.attachedShapeId = shapeHit.id; connection.invoke('GrabShape', shapeHit.id, world.x, world.y).catch(noop); return; }
         const hit = pickBlock(world.x, world.y);
         if (hit && connection) { state.attachedBlockId = hit.id; connection.invoke('Grab', hit.id, world.x, world.y).catch(noop); return; }
         const wallHit = pickWall(world.x, world.y);
         if (wallHit && connection) { state.attachedWallId = wallHit.id; connection.invoke('GrabWall', wallHit.id, world.x, world.y).catch(noop); return; }
-        armed = { t0: performance.now(), worldX: world.x, worldY: world.y, moved: 0 };
+        // Empty space — arm a whistle and a potential pan.
+        armed = { startX: e.clientX, startY: e.clientY, startT: performance.now(), worldX: world.x, worldY: world.y };
+        state.pan.sx = e.clientX; state.pan.sy = e.clientY;
+        state.pan.ox = state.cam.x; state.pan.oy = state.cam.y;
     };
     const onMouseMove = (e) => {
-        if (!state.locked) return;                       // paused → OS cursor drives the menu
-        const rect = canvas.getBoundingClientRect();
-        // movementX/Y are raw deltas; accumulate into the virtual cursor and clamp to the viewport
-        // so the pointer can never leave the play area.
-        state.vcursor.x = clamp(state.vcursor.x + e.movementX, 0, rect.width);
-        state.vcursor.y = clamp(state.vcursor.y + e.movementY, 0, rect.height);
-        if (armed) armed.moved += Math.abs(e.movementX) + Math.abs(e.movementY);
-        state.mouseWorld = clampCursor(vcursorToWorld());
+        if (state.paused) return;
+        if (armed && !state.pan.active) {
+            const dx = e.clientX - armed.startX, dy = e.clientY - armed.startY;
+            if (dx * dx + dy * dy >= DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX) {
+                state.pan.active = true; armed = null;
+                if (viewport) viewport.classList.add('dragging');
+            }
+        }
+        if (state.pan.active) {
+            const dx = (e.clientX - state.pan.sx) / state.cam.z;
+            const dy = (e.clientY - state.pan.sy) / state.cam.z;
+            state.cam.x = clamp(state.pan.ox - dx, 0, state.world.width);
+            state.cam.y = clamp(state.pan.oy - dy, 0, state.world.height);
+        }
+        state.mouseWorld = clampCursor(clientToWorld(e.clientX, e.clientY));
     };
     const onMouseUp = () => {
-        if (armed) {
-            const dt = performance.now() - armed.t0;
-            if (dt <= CLICK_MAX_MS && armed.moved <= CLICK_MOVE_PX) {
+        if (state.pan.active) {
+            state.pan.active = false;
+            if (viewport) viewport.classList.remove('dragging');
+        } else if (armed) {
+            const dt = performance.now() - armed.startT;
+            if (dt <= CLICK_MAX_MS) {
                 playWhistle(state.me.color);
                 state.whistleAnims.push({ x: armed.worldX, y: armed.worldY, color: state.me.color, t0: performance.now() });
                 if (connection) connection.invoke('Whistle', armed.worldX, armed.worldY).catch(noop);
             }
-            armed = null;
         }
+        armed = null;
         releaseGrab();
     };
-    // Wheel zoom, anchored at the virtual cursor so the world point under it stays put.
+    // Wheel zoom, anchored at the cursor so the world point under it stays put.
     const onWheel = (e) => {
         e.preventDefault();
-        const before = vcursorToWorld();
+        if (state.paused) return;
+        const before = clientToWorld(e.clientX, e.clientY);
         const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
         state.cam.z = clamp(state.cam.z * factor, ZOOM_MIN, ZOOM_MAX);
-        const after = vcursorToWorld();
+        const after = clientToWorld(e.clientX, e.clientY);
         state.cam.x = clamp(state.cam.x + (before.x - after.x), 0, state.world.width);
         state.cam.y = clamp(state.cam.y + (before.y - after.y), 0, state.world.height);
-        state.mouseWorld = clampCursor(vcursorToWorld());
+        state.mouseWorld = clampCursor(clientToWorld(e.clientX, e.clientY));
     };
 
     // Losing window focus: a mouseup can land off-canvas and never reach us, leaving a pan or
     // grab stuck "held". Clear interaction state (and tell the server to release) so returning
     // to the tab is clean rather than dragging whatever was under the cursor when you left.
     const onWindowBlur = () => {
-        // Losing focus also drops pointer lock (→ onPointerLockChange → pause); clear local
-        // interaction state so nothing is left "held".
+        // A mouseup can land off-window while unfocused; clear interaction state so a pan/grab
+        // isn't left "held" when focus returns.
+        if (state.pan.active) { state.pan.active = false; if (viewport) viewport.classList.remove('dragging'); }
         armed = null;
         hideContextMenu();
         releaseGrab();
@@ -175,14 +186,10 @@ export async function start(opts) {
         const menu = els.contextMenu;
         if (!menu) return;
         menu.removeAttribute('hidden');
-        // Position at the pointer (the virtual cursor when locked, else the raw event), nudged
-        // back inside the window if it would overflow an edge.
-        const rect = canvas.getBoundingClientRect();
-        const cx = state.locked ? rect.left + state.vcursor.x : e.clientX;
-        const cy = state.locked ? rect.top + state.vcursor.y : e.clientY;
+        // Position at the pointer, nudged back inside the window if it would overflow an edge.
         const mw = menu.offsetWidth, mh = menu.offsetHeight;
-        const x = Math.max(4, Math.min(cx, window.innerWidth - mw - 4));
-        const y = Math.max(4, Math.min(cy, window.innerHeight - mh - 4));
+        const x = Math.max(4, Math.min(e.clientX, window.innerWidth - mw - 4));
+        const y = Math.max(4, Math.min(e.clientY, window.innerHeight - mh - 4));
         menu.style.left = x + 'px';
         menu.style.top = y + 'px';
     };
@@ -191,7 +198,12 @@ export async function start(opts) {
         const menu = els.contextMenu;
         if (menu && !menu.hasAttribute('hidden') && !menu.contains(e.target)) hideContextMenu();
     };
-    const onKeyDown = (e) => { if (e.key === 'Escape') hideContextMenu(); };
+    const onKeyDown = (e) => {
+        if (e.key !== 'Escape') return;
+        // ESC closes the context menu if it's open, otherwise toggles the pause menu.
+        if (els.contextMenu && !els.contextMenu.hasAttribute('hidden')) { hideContextMenu(); return; }
+        setPaused(!state.paused);
+    };
     const onMenuClick = () => hideContextMenu();   // future items will handle their own actions
 
     const wheelHandler = (e) => { hideContextMenu(); onWheel(e); };
@@ -206,7 +218,6 @@ export async function start(opts) {
     document.addEventListener('contextmenu', onContextMenu);
     document.addEventListener('mousedown', onDocPointerDown, true);
     window.addEventListener('keydown', onKeyDown);
-    document.addEventListener('pointerlockchange', onPointerLockChange);
     if (els.contextMenu) els.contextMenu.addEventListener('click', onMenuClick);
 
     // Cache the HUD elements once. Hot-path renderers (renderVote/syncLevelDropdown/renderStatus)
@@ -241,17 +252,12 @@ export async function start(opts) {
     };
     const onVoteYes = () => { if (connection) connection.invoke('CastVote', true).catch(noop); };
     const onVoteNo  = () => { if (connection) connection.invoke('CastVote', false).catch(noop); };
-    const onResume  = () => requestLock();   // re-capture the cursor and close the pause menu
+    const onResume  = () => setPaused(false);   // close the pause menu, back to play
     if (resetBtn)    resetBtn.addEventListener('click', onResetClick);
     if (levelSelect) levelSelect.addEventListener('change', onLevelChange);
     if (voteYesBtn)  voteYesBtn.addEventListener('click', onVoteYes);
     if (voteNoBtn)   voteNoBtn.addEventListener('click', onVoteNo);
     if (els.pauseResume) els.pauseResume.addEventListener('click', onResume);
-
-    // Start paused with the menu up; the player clicks Resume to capture the cursor and play.
-    state.vcursor.x = canvas.getBoundingClientRect().width / 2;
-    state.vcursor.y = canvas.getBoundingClientRect().height / 2;
-    if (els.pause) els.pause.removeAttribute('hidden');
 
     detachListeners = () => {
         canvas.removeEventListener('mousedown', onMouseDown);
@@ -264,7 +270,6 @@ export async function start(opts) {
         document.removeEventListener('contextmenu', onContextMenu);
         document.removeEventListener('mousedown', onDocPointerDown, true);
         window.removeEventListener('keydown', onKeyDown);
-        document.removeEventListener('pointerlockchange', onPointerLockChange);
         if (els.contextMenu) els.contextMenu.removeEventListener('click', onMenuClick);
         if (els.pauseResume) els.pauseResume.removeEventListener('click', onResume);
         window.removeEventListener('resize', resize);
@@ -337,8 +342,7 @@ export async function start(opts) {
 
 export async function stop() {
     cancelAnimationFrame(raf); raf = 0;
-    try { if (document.pointerLockElement) document.exitPointerLock(); } catch {}
-    state.locked = false; state.paused = true;
+    state.paused = false;
     if (detachListeners) { detachListeners(); detachListeners = null; }
     if (connection) { try { await connection.stop(); } catch {} connection = null; }
     // Drop cached element refs + derived UI state so a fresh start() re-resolves against the
@@ -349,36 +353,20 @@ export async function stop() {
 }
 
 function loop(now) {
-    edgePan();
+    followCamera();
     sendInput(now);
     render(now);
     raf = requestAnimationFrame(loop);
 }
 
-// Virtual-cursor (CSS px within the canvas) → world coordinates, via the same transform as a real
-// pointer. Used everywhere the locked cursor's world position is needed.
-function vcursorToWorld() {
-    if (!canvas) return state.mouseWorld;
-    const rect = canvas.getBoundingClientRect();
-    return clientToWorld(rect.left + state.vcursor.x, rect.top + state.vcursor.y);
-}
-
-// Edge-pan: while locked, a virtual cursor pushed against a viewport edge scrolls the camera that
-// way (RTS-style), so the whole 10k world is reachable even though the cursor is clamped on-screen.
-function edgePan() {
-    if (!state.locked || state.paused || !canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const margin = 70, speed = 16 / state.cam.z;
-    let dx = 0, dy = 0;
-    if (state.vcursor.x < margin) dx = -(1 - state.vcursor.x / margin);
-    else if (state.vcursor.x > rect.width - margin) dx = 1 - (rect.width - state.vcursor.x) / margin;
-    if (state.vcursor.y < margin) dy = -(1 - state.vcursor.y / margin);
-    else if (state.vcursor.y > rect.height - margin) dy = 1 - (rect.height - state.vcursor.y) / margin;
-    if (dx !== 0 || dy !== 0) {
-        state.cam.x = clamp(state.cam.x + dx * speed, 0, state.world.width);
-        state.cam.y = clamp(state.cam.y + dy * speed, 0, state.world.height);
-        state.mouseWorld = clampCursor(vcursorToWorld());   // world under the cursor shifts as we pan
-    }
+// While tethered, ease the camera toward the cursor so the action stays centred — you focus on
+// the object you're pulling without fighting the pan. Manual drag-pan takes over when you let go.
+function followCamera() {
+    if (state.paused) return;
+    if (!(state.attachedBlockId || state.attachedShapeId || state.attachedWallId)) return;
+    const k = 0.08;
+    state.cam.x = clamp(state.cam.x + (state.mouseWorld.x - state.cam.x) * k, 0, state.world.width);
+    state.cam.y = clamp(state.cam.y + (state.mouseWorld.y - state.cam.y) * k, 0, state.world.height);
 }
 
 function sendInput(now) {

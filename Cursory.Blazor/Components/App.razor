@@ -11,6 +11,19 @@
 </head>
 <body>
     <Routes @rendermode="@RenderMode.InteractiveServer" />
+    @* Custom reconnect UI — defining #components-reconnect-modal suppresses Blazor's default
+       white modal (unreadable in dark mode). The framework toggles the state classes; CSS in
+       site.css reacts and swaps the message. *@
+    <div id="components-reconnect-modal" class="reconnect-modal">
+        <div class="reconnect-card">
+            <div class="reconnect-spinner"></div>
+            <p class="reconnect-text">
+                <span class="reconnect-default">Connection lost. Reconnecting…</span>
+                <span class="reconnect-failed">Reconnect failed — retrying…</span>
+                <span class="reconnect-rejected">Couldn't reconnect. <a href="/">Reload</a>.</span>
+            </p>
+        </div>
+    </div>
     <script src="_framework/blazor.web.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@@microsoft/signalr@8.0.7/dist/browser/signalr.min.js"
             crossorigin="anonymous"></script>
