@@ -188,15 +188,12 @@ public class RoomState
     {
         if (!cursors.TryGetValue(userId, out var c)) return false;
         if (!IsFinite(x) || !IsFinite(y)) return true;
-        x = Math.Clamp(x, 0, WorldGeometry.Width);
-        y = Math.Clamp(y, 0, WorldGeometry.Height);
-        // Solid cursor (authoritative — every client sees this copy). First sweep the path from
-        // the previous position so a fast frame can't tunnel through a thin wall, then disc-eject
-        // from walls and other shapes at the stopped point. The raw click used for grabbing is
-        // separate, so you can still grab an edge; you don't collide with the shape you hold.
-        (x, y) = SweepCursorAgainstWalls(c.X, c.Y, x, y);
-        (x, y) = ResolveOutOfWalls(x, y);
-        (c.X, c.Y) = ResolveOutOfShapes(x, y);
+        // The cursor is a free pointer: it tracks the player's mouse 1:1, clamped only to the
+        // world bounds. (It does NOT collide with walls/shapes — that was for the abandoned
+        // pointer-lock model and trapped the pointer against geometry. Grabbing/wrapping still
+        // works; the rope catches corners on the body, not the cursor.)
+        c.X = Math.Clamp(x, 0, WorldGeometry.Width);
+        c.Y = Math.Clamp(y, 0, WorldGeometry.Height);
         c.LastInputTick = CurrentTick;
         return true;
     }

@@ -228,18 +228,17 @@ public class RoomStateTests
         Assert.That(dist, Is.LessThanOrEqualTo(301), $"cursor should be leashed to ~300 px, was {dist}");
     }
 
-    /// <summary>A single fast jump across a thin wall is stopped at the surface, not tunnelled —
-    /// the swept test catches the crossing the per-point eject would miss.</summary>
+    /// <summary>The cursor is a free pointer — it passes through walls and tracks the mouse 1:1
+    /// (collision was for the abandoned pointer-lock model and trapped it against geometry).</summary>
     [Test]
-    public void Cursor_does_not_tunnel_through_a_thin_wall()
+    public void Cursor_passes_freely_through_walls()
     {
         var room = new RoomState();
-        room.AddTestCursor("u1", 1800, 2000);                              // left of the wall
-        room.AddWall(new Wall { Id = "w", X = 2000, Y = 2000, W = 60, H = 2000 });  // thin vertical wall
-        room.SetCursorPosition("u1", 2600, 2000);                          // jump to the far side in one frame
+        room.AddTestCursor("u1", 1800, 2000);
+        room.AddWall(new Wall { Id = "w", X = 2000, Y = 2000, W = 60, H = 2000 });
+        room.SetCursorPosition("u1", 2600, 2000);   // straight across the wall, in one move
 
-        var c = room.GetCursor("u1")!;
-        Assert.That(c.X, Is.LessThan(1970), $"cursor must stop at the wall, not tunnel through; X={c.X}");
+        Assert.That(room.GetCursor("u1")!.X, Is.EqualTo(2600).Within(0.5), "cursor follows the mouse through the wall");
     }
 
     /// <summary>With the segmented tether on, orbiting the cursor around a light body wraps the

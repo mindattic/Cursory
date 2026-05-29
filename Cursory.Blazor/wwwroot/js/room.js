@@ -32,8 +32,10 @@ const state = {
     pan: { active: false, sx: 0, sy: 0, ox: 0, oy: 0 },
     mouseWorld: { x: 5000, y: 5000 },
     // ESC toggles the pause menu. The cursor is the free OS mouse (rendered as our own arrow);
-    // empty-space drag pans, and while you're tethered the camera eases to follow your cursor.
+    // empty-space drag pans. pointerOver tracks whether the hardware cursor is inside the viewport
+    // — when it leaves we stop drawing our arrow (so it isn't left frozen), and recapture on re-entry.
     paused: false,
+    pointerOver: true,
     // Static geometry — populated once via the "Geometry" message on hub connect.
     geometry: { walls: [], labels: [] },
     // Per-tick dynamic snapshot.
@@ -189,6 +191,15 @@ export async function start(opts) {
         raf = requestAnimationFrame(loop);
     };
 
+    // The hardware cursor left/re-entered the viewport. mousemove stops firing while it's outside,
+    // so the rendered arrow would freeze; hide it while out, and snap it back to the real pointer
+    // the instant it re-enters (recapture) instead of waiting for the next move.
+    const onPointerEnter = (e) => {
+        state.pointerOver = true;
+        if (!state.paused) state.mouseWorld = clampCursor(clientToWorld(e.clientX, e.clientY));
+    };
+    const onPointerLeave = () => { state.pointerOver = false; };
+
     // Custom right-click menu (replaces the browser's). Placeholder "TBD" for now.
     const hideContextMenu = () => { if (els.contextMenu) els.contextMenu.setAttribute('hidden', ''); };
     const onContextMenu = (e) => {
@@ -220,6 +231,8 @@ export async function start(opts) {
 
     canvas.addEventListener('mousedown', onMouseDown);
     canvas.addEventListener('wheel', wheelHandler, { passive: false });
+    canvas.addEventListener('mouseenter', onPointerEnter);
+    canvas.addEventListener('mouseleave', onPointerLeave);
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
     window.addEventListener('blur', onWindowBlur);
@@ -272,6 +285,8 @@ export async function start(opts) {
     detachListeners = () => {
         canvas.removeEventListener('mousedown', onMouseDown);
         canvas.removeEventListener('wheel', wheelHandler);
+        canvas.removeEventListener('mouseenter', onPointerEnter);
+        canvas.removeEventListener('mouseleave', onPointerLeave);
         window.removeEventListener('mousemove', onMouseMove);
         window.removeEventListener('mouseup', onMouseUp);
         window.removeEventListener('blur', onWindowBlur);
@@ -487,10 +502,10 @@ const CURSOR_RADIUS = 10;
 // Eject the cursor disc out of walls, then shapes, then hold it inside the tether leash. The
 // server does the same to the authoritative position; this is the immediate local copy. Mutates
 // and returns the point.
+// The cursor is a free pointer: it tracks the hardware mouse 1:1. The only constraint is the
+// tether leash while you're grabbing (you can't pull past the rope's max length). It does NOT
+// collide with walls/shapes — that trapped the pointer against geometry on level load.
 function clampCursor(p) {
-    sweepWalls(p);          // stop at a wall the path crossed (anti-tunnel), from the last position
-    resolveOutOfWalls(p);
-    resolveOutOfShapes(p);
     leashTether(p);
     return p;
 }
@@ -684,6 +699,9 @@ function drawAttachLines() {
 function drawCursors() {
     for (const c of state.snapshot.cursors || []) {
         const isMe = c.userId === state.me.userId;
+        // Don't draw our own arrow while the hardware cursor is outside the viewport — it would
+        // otherwise sit frozen at the edge, looking disconnected. It snaps back on re-entry.
+        if (isMe && !state.pointerOver) continue;
         const p = cursorRenderPos(c);
         // Tip direction. When tethered, the tip points straight back at the world anchor (you can
         // see what each cursor is pulling on, walls included); otherwise it rests pointing up-left.
