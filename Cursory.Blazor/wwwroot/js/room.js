@@ -36,6 +36,10 @@ const state = {
     // — when it leaves we stop drawing our arrow (so it isn't left frozen), and recapture on re-entry.
     paused: false,
     pointerOver: true,
+    // Last hardware-mouse SCREEN position. The cursor's world position is recomputed from this
+    // every frame, so it stays under the real pointer even as the camera pans (e.g. while dragging).
+    lastClientX: 0,
+    lastClientY: 0,
     cursorCollision: false,   // room-wide toggles, synced from the snapshot
     segmentedTether: false,
     // Static geometry — populated once via the "Geometry" message on hub connect.
@@ -142,6 +146,7 @@ export async function start(opts) {
             state.cam.x = clamp(state.pan.ox - dx, 0, state.world.width);
             state.cam.y = clamp(state.pan.oy - dy, 0, state.world.height);
         }
+        state.lastClientX = e.clientX; state.lastClientY = e.clientY;
         state.mouseWorld = clampCursor(clientToWorld(e.clientX, e.clientY));
     };
     const onMouseUp = () => {
@@ -198,6 +203,7 @@ export async function start(opts) {
     // the instant it re-enters (recapture) instead of waiting for the next move.
     const onPointerEnter = (e) => {
         state.pointerOver = true;
+        state.lastClientX = e.clientX; state.lastClientY = e.clientY;
         if (!state.paused) state.mouseWorld = clampCursor(clientToWorld(e.clientX, e.clientY));
     };
     const onPointerLeave = () => { state.pointerOver = false; };
@@ -289,6 +295,9 @@ export async function start(opts) {
     if (els.pauseResume) els.pauseResume.addEventListener('click', onResume);
     if (els.toggleColl)  els.toggleColl.addEventListener('change', onToggleColl);
     if (els.toggleRope)  els.toggleRope.addEventListener('change', onToggleRope);
+
+    // Seed the screen-space cursor at the viewport centre until the first real mouse event.
+    { const r = canvas.getBoundingClientRect(); state.lastClientX = r.left + r.width / 2; state.lastClientY = r.top + r.height / 2; }
 
     detachListeners = () => {
         canvas.removeEventListener('mousedown', onMouseDown);
@@ -393,9 +402,45 @@ export async function stop() {
 }
 
 function loop(now) {
+    followCamera();      // ease the camera while dragging so the action stays on screen
+    refreshCursor();     // keep the rendered cursor under the hardware pointer as the camera moves
     sendInput(now);
     render(now);
     raf = requestAnimationFrame(loop);
+}
+
+// While grabbing a movable body, ease the camera to the midpoint between the cursor and the body,
+// so dragging across the world keeps both framed — no need to stop and re-pan.
+function followCamera() {
+    if (state.paused) return;
+    const body = grabbedBodyCenter();
+    if (!body) return;
+    const tx = (state.mouseWorld.x + body.x) / 2;
+    const ty = (state.mouseWorld.y + body.y) / 2;
+    const k = 0.12;
+    state.cam.x = clamp(state.cam.x + (tx - state.cam.x) * k, 0, state.world.width);
+    state.cam.y = clamp(state.cam.y + (ty - state.cam.y) * k, 0, state.world.height);
+}
+
+// Recompute the cursor's world position from the last hardware-mouse screen position every frame,
+// so it tracks the real pointer even when the camera pans under it (otherwise it would freeze /
+// drift off, since mouseWorld is only set on mousemove).
+function refreshCursor() {
+    if (state.paused) return;
+    state.mouseWorld = clampCursor(clientToWorld(state.lastClientX, state.lastClientY));
+}
+
+// World centre of the body the local player is currently grabbing (block or shape), or null.
+function grabbedBodyCenter() {
+    if (state.attachedBlockId) {
+        const b = (state.snapshot.blocks || []).find(x => x.id === state.attachedBlockId);
+        if (b) return { x: b.x, y: b.y };
+    }
+    if (state.attachedShapeId) {
+        const s = (state.snapshot.shapes || []).find(x => x.id === state.attachedShapeId);
+        if (s) return { x: s.x, y: s.y };
+    }
+    return null;
 }
 
 function sendInput(now) {
@@ -715,9 +760,10 @@ function drawAttachLines() {
 function drawCursors() {
     for (const c of state.snapshot.cursors || []) {
         const isMe = c.userId === state.me.userId;
-        // Don't draw our own arrow while the hardware cursor is outside the viewport — it would
-        // otherwise sit frozen at the edge, looking disconnected. It snaps back on re-entry.
-        if (isMe && !state.pointerOver) continue;
+        // Don't draw our own arrow while the hardware cursor is outside the viewport (it would sit
+        // frozen at the edge) — but keep it while grabbing, so a drag near the edge stays visible.
+        const grabbing = state.attachedBlockId || state.attachedShapeId || state.attachedWallId;
+        if (isMe && !state.pointerOver && !grabbing) continue;
         const p = cursorRenderPos(c);
         // Tip direction. When tethered, the tip points straight back at the world anchor (you can
         // see what each cursor is pulling on, walls included); otherwise it rests pointing up-left.
