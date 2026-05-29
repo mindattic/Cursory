@@ -9,9 +9,11 @@ offset pulls genuinely rotate it.
 > **Physics: real rigid bodies via Aether.Physics2D (commit b12cec4).** The
 > earlier hand-rolled "sum-of-springs" kinematics with switch tiles and gated
 > doors are gone. Blocks, walls, and now compound **shapes** are all engine
-> bodies (`bodyByBlock`/`bodyByWall`/`bodyByShape`). `LevelCount = 3` (two block
-> levels + the first shape level); the rest of commit 541d39e's fourteen get
-> re-ported as the feel is locked. Switches/doors are still deferred.
+> bodies (`bodyByBlock`/`bodyByWall`/`bodyByShape`). All `LevelCount = 14` levels
+> are engine-backed and tuned for two players (`SeedLevel1`..`SeedLevel14`). The
+> old switch/door levels are re-themed as cooperative geometry — gap-heaves,
+> corridors, two-pad locks — since switches and doors aren't ported yet. Level
+> geometry is a forgiving first pass; tune masses/gaps by feel.
 
 ## Repo shape
 

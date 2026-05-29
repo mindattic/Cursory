@@ -274,10 +274,23 @@ public class RoomStateTests
         Assert.That(geom.Labels, Has.Some.Matches<WorldLabel>(l => l.Id == "L1-label"));
     }
 
-    /// <summary>Three engine-backed levels so far: two block levels + the first shape level.</summary>
+    /// <summary>All fourteen levels are engine-backed now.</summary>
     [Test]
-    public void LevelCount_is_three()
+    public void LevelCount_is_fourteen()
     {
-        Assert.That(RoomState.LevelCount, Is.EqualTo(3));
+        Assert.That(RoomState.LevelCount, Is.EqualTo(14));
+    }
+
+    /// <summary>Every level seeds without throwing and produces broadcastable geometry — a guard
+    /// against a typo'd level (bad piece list, missing body) crashing the room on switch.</summary>
+    [TestCase(1)] [TestCase(2)] [TestCase(3)] [TestCase(4)] [TestCase(5)] [TestCase(6)] [TestCase(7)]
+    [TestCase(8)] [TestCase(9)] [TestCase(10)] [TestCase(11)] [TestCase(12)] [TestCase(13)] [TestCase(14)]
+    public void Every_level_seeds_and_steps(int level)
+    {
+        var room = new RoomState();
+        room.AddOrUpdatePlayer("u1", "c1", "U1", "#fff");   // solo room → vote quorum 1, resolves at once
+        if (level != 1) Assert.That(room.StartLevelVote("u1", level), Is.True);
+        Assert.That(room.CurrentLevel, Is.EqualTo(level));
+        Assert.DoesNotThrow(() => { for (var i = 0; i < 3; i++) room.Step(); _ = room.Snapshot(); _ = room.GeometryMessage(); });
     }
 }

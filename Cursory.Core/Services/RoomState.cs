@@ -83,10 +83,11 @@ public class RoomState
     private readonly ConcurrentQueue<Whistle> whistles = new();
     private RoomVote? activeVote;
     private readonly Lock voteLock = new();
-    /// <summary>Total number of seeded levels. Drives the UI dropdown. Three are engine-backed
-    /// (two block levels + the first compound-shape level); the rest of commit 541d39e's fourteen
-    /// get re-ported onto the engine as the feel is locked.</summary>
-    public const int LevelCount = 3;
+    /// <summary>Total number of seeded levels. Drives the UI dropdown. All fourteen are now
+    /// engine-backed and tuned for two cooperating players (the old switch/door levels are
+    /// re-themed as cooperative geometry — gap-heaves, corridors, two-pad locks — since switches
+    /// and doors aren't ported to the engine yet).</summary>
+    public const int LevelCount = 14;
     private int currentLevel = 1;
     private readonly Lock levelLock = new();
     private const int WhistleRingCapacity = 256;
@@ -968,8 +969,19 @@ public class RoomState
     {
         switch (currentLevel)
         {
-            case 3: SeedLevel3(); break;
             case 2: SeedLevel2(); break;
+            case 3: SeedLevel3(); break;
+            case 4: SeedLevel4(); break;
+            case 5: SeedLevel5(); break;
+            case 6: SeedLevel6(); break;
+            case 7: SeedLevel7(); break;
+            case 8: SeedLevel8(); break;
+            case 9: SeedLevel9(); break;
+            case 10: SeedLevel10(); break;
+            case 11: SeedLevel11(); break;
+            case 12: SeedLevel12(); break;
+            case 13: SeedLevel13(); break;
+            case 14: SeedLevel14(); break;
             default: SeedLevel1(); break;
         }
     }
@@ -1092,6 +1104,214 @@ public class RoomState
             Id = "L3-label", X = 5000, Y = 3300,
             Title = "Level 3 — Pivot the couch",
             Subtitle = "Grab the L's edges and route it around the wall onto the pad. Two cursors to turn it.",
+        };
+    }
+
+    // Levels 4–14: engine-backed, tuned for two players. Cooperative single-bodies use Mass > the
+    // single-grab ceiling (1.5) so one cursor can't solo them; mirror/two-key levels use two light
+    // bodies (one per player). Geometry is a forgiving first pass — easy to tune by feel.
+
+    /// <summary>Level 4 — "Stand together, then heave". A heavy block lined up and heaved straight
+    /// through a gap in a wall; one cursor can't beat its Mass, two pulling together can.</summary>
+    private void SeedLevel4()
+    {
+        const string id = "L4-block";
+        AddBlockLocked(new BlockState { Id = id, X = 2800, Y = 5000, W = 240, H = 240, Mass = 2.2, Color = "#D4537E" });
+        AddWallLocked(new Wall { Id = "L4-wt", X = 5000, Y = 4150, W = 220, H = 1300 });   // gap from y4800
+        AddWallLocked(new Wall { Id = "L4-wb", X = 5000, Y = 5850, W = 220, H = 1300 });   // to y5200 (400 tall)
+        goals["L4-goal"] = new GoalZone { Id = "L4-goal", X = 7200, Y = 5000, W = 800, H = 800, TargetBlockId = id };
+        labels["L4-label"] = new WorldLabel
+        {
+            Id = "L4-label", X = 5000, Y = 3200,
+            Title = "Level 4 — Stand together, then heave",
+            Subtitle = "Mass 2.2 — one cursor can't. Line up and heave it straight through the gap together.",
+        };
+    }
+
+    /// <summary>Level 5 — "Heavy heave". The heaviest straight drag: only two cursors near full
+    /// stretch beat it. No obstacles — pure cooperative strength.</summary>
+    private void SeedLevel5()
+    {
+        const string id = "L5-block";
+        AddBlockLocked(new BlockState { Id = id, X = 2800, Y = 5000, W = 300, H = 300, Mass = 2.6, Color = "#3a3a3a" });
+        goals["L5-goal"] = new GoalZone { Id = "L5-goal", X = 7200, Y = 5000, W = 850, H = 850, TargetBlockId = id };
+        labels["L5-label"] = new WorldLabel
+        {
+            Id = "L5-label", X = 5000, Y = 3300,
+            Title = "Level 5 — Heavy heave",
+            Subtitle = "Mass 2.6. Both cursors, both pulling hard the same way. Watch your pull numbers add up.",
+        };
+    }
+
+    /// <summary>Level 6 — "Mirror match". Two light blocks, two pads — divide and conquer, a cursor
+    /// each. Each block is solo-movable; doing both at once wants two players.</summary>
+    private void SeedLevel6()
+    {
+        const string a = "L6-a", b = "L6-b";
+        AddBlockLocked(new BlockState { Id = a, X = 3000, Y = 4200, W = 170, H = 170, Mass = 1.1, Color = "#7F77DD" });
+        AddBlockLocked(new BlockState { Id = b, X = 3000, Y = 5800, W = 170, H = 170, Mass = 1.1, Color = "#D85A30" });
+        goals["L6-ga"] = new GoalZone { Id = "L6-ga", X = 7000, Y = 4200, W = 550, H = 550, TargetBlockId = a };
+        goals["L6-gb"] = new GoalZone { Id = "L6-gb", X = 7000, Y = 5800, W = 550, H = 550, TargetBlockId = b };
+        labels["L6-label"] = new WorldLabel
+        {
+            Id = "L6-label", X = 5000, Y = 3300,
+            Title = "Level 6 — Mirror match",
+            Subtitle = "Two blocks, two pads. Take one each.",
+        };
+    }
+
+    /// <summary>Level 7 — "Stand and slide". Slide a block down a narrow corridor to the pad at the
+    /// far end. The corridor keeps it on rails; Mass 2 wants two cursors.</summary>
+    private void SeedLevel7()
+    {
+        const string id = "L7-block";
+        AddBlockLocked(new BlockState { Id = id, X = 2700, Y = 5000, W = 200, H = 200, Mass = 2.0, Color = "#D4537E" });
+        AddWallLocked(new Wall { Id = "L7-top", X = 4500, Y = 4760, W = 4200, H = 120 });   // corridor inner
+        AddWallLocked(new Wall { Id = "L7-bot", X = 4500, Y = 5240, W = 4200, H = 120 });   // y4820..5180
+        goals["L7-goal"] = new GoalZone { Id = "L7-goal", X = 7100, Y = 5000, W = 600, H = 600, TargetBlockId = id };
+        labels["L7-label"] = new WorldLabel
+        {
+            Id = "L7-label", X = 5000, Y = 3300,
+            Title = "Level 7 — Stand and slide",
+            Subtitle = "Keep it in the corridor and slide it to the far pad. Two cursors to move it.",
+        };
+    }
+
+    /// <summary>Level 8 — "Block taxi". Taxi a block along a zig-zag route around two jutting walls
+    /// to the far pad. Mass 2 wants two cursors steering together.</summary>
+    private void SeedLevel8()
+    {
+        const string id = "L8-block";
+        AddBlockLocked(new BlockState { Id = id, X = 2700, Y = 5000, W = 200, H = 200, Mass = 2.0, Color = "#7F77DD" });
+        AddWallLocked(new Wall { Id = "L8-w1", X = 4800, Y = 4100, W = 200, H = 1700 });   // hangs from top to y4950
+        AddWallLocked(new Wall { Id = "L8-w2", X = 5800, Y = 5900, W = 200, H = 1700 });   // rises from bottom to y5050
+        goals["L8-goal"] = new GoalZone { Id = "L8-goal", X = 7200, Y = 5000, W = 700, H = 700, TargetBlockId = id };
+        labels["L8-label"] = new WorldLabel
+        {
+            Id = "L8-label", X = 5000, Y = 3200,
+            Title = "Level 8 — Block taxi",
+            Subtitle = "Weave the block around the walls — below the first, above the second — to the pad.",
+        };
+    }
+
+    /// <summary>Level 9 — "Couch corner". Carry a long bar through an L-bend hallway: rotate it from
+    /// horizontal to vertical to turn the corner. Two cursors on the ends for the torque.</summary>
+    private void SeedLevel9()
+    {
+        const string id = "L9-bar";
+        AddShapeLocked(new ShapeActor
+        {
+            Id = id, X = 3000, Y = 5400, Mass = 2.0, Color = "#7FBF5A",
+            Pieces = [new ShapePiece { LocalX = 0, LocalY = 0, HalfW = 280, HalfH = 70 }],
+        });
+        // Horizontal hallway (y≈5000, x2200..5400) meeting a vertical hallway (x≈5000, y up to 3200).
+        AddWallLocked(new Wall { Id = "L9-h-top", X = 3800, Y = 4600, W = 3200, H = 120 });   // ceiling of horizontal run
+        AddWallLocked(new Wall { Id = "L9-h-bot", X = 3500, Y = 5800, W = 2600, H = 120 });   // floor of horizontal run
+        AddWallLocked(new Wall { Id = "L9-v-left", X = 4600, Y = 4000, W = 120, H = 2000 });  // left wall of vertical run
+        AddWallLocked(new Wall { Id = "L9-v-right", X = 5800, Y = 3700, W = 120, H = 2400 });// right wall of vertical run
+        AddShapeGoal(new ShapeGoal { Id = "L9-goal", X = 5200, Y = 3500, W = 1000, H = 1000, TargetShapeId = id });
+        labels["L9-label"] = new WorldLabel
+        {
+            Id = "L9-label", X = 4000, Y = 2900,
+            Title = "Level 9 — Couch corner",
+            Subtitle = "Pivot the bar around the corner and up the hallway to the pad.",
+        };
+    }
+
+    /// <summary>Level 10 — "Tug steady". A heavy straight drag where pulling opposite directions
+    /// cancels — the lesson is to pull together, steadily, the same way.</summary>
+    private void SeedLevel10()
+    {
+        const string id = "L10-block";
+        AddBlockLocked(new BlockState { Id = id, X = 2800, Y = 5000, W = 280, H = 280, Mass = 2.6, Color = "#378ADD" });
+        goals["L10-goal"] = new GoalZone { Id = "L10-goal", X = 7200, Y = 5000, W = 850, H = 850, TargetBlockId = id };
+        labels["L10-label"] = new WorldLabel
+        {
+            Id = "L10-label", X = 5000, Y = 3300,
+            Title = "Level 10 — Tug steady",
+            Subtitle = "Same direction beats friction; opposite directions cancel. Don't fight your partner.",
+        };
+    }
+
+    /// <summary>Level 11 — "Two-key lock". Two pads in separate lanes, a block for each — both must
+    /// be parked. One cursor each; the divider keeps the lanes apart.</summary>
+    private void SeedLevel11()
+    {
+        const string a = "L11-a", b = "L11-b";
+        AddBlockLocked(new BlockState { Id = a, X = 3000, Y = 4300, W = 180, H = 180, Mass = 1.3, Color = "#1D9E75" });
+        AddBlockLocked(new BlockState { Id = b, X = 3000, Y = 5700, W = 180, H = 180, Mass = 1.3, Color = "#1D9E75" });
+        AddWallLocked(new Wall { Id = "L11-div", X = 5000, Y = 5000, W = 5400, H = 140 });   // lane divider
+        goals["L11-ga"] = new GoalZone { Id = "L11-ga", X = 7000, Y = 4300, W = 550, H = 550, TargetBlockId = a };
+        goals["L11-gb"] = new GoalZone { Id = "L11-gb", X = 7000, Y = 5700, W = 550, H = 550, TargetBlockId = b };
+        labels["L11-label"] = new WorldLabel
+        {
+            Id = "L11-label", X = 5000, Y = 3200,
+            Title = "Level 11 — Two-key lock",
+            Subtitle = "Both pads, both lanes, at once. A cursor each.",
+        };
+    }
+
+    /// <summary>Level 12 — "Spinner". A long bar that only fits the gap edge-on: rotate it vertical
+    /// to thread the narrow slot, then onto the pad. Two cursors on the ends for the spin.</summary>
+    private void SeedLevel12()
+    {
+        const string id = "L12-bar";
+        AddShapeLocked(new ShapeActor
+        {
+            Id = id, X = 3000, Y = 5000, Mass = 2.0, Color = "#D85A30",
+            Pieces = [new ShapePiece { LocalX = 0, LocalY = 0, HalfW = 350, HalfH = 80 }],
+        });
+        // A narrow vertical slot: the 700-long bar (160 thick) only passes the 600-wide gap upright.
+        AddWallLocked(new Wall { Id = "L12-left", X = 4350, Y = 5000, W = 700, H = 1700 });   // gap from x4700
+        AddWallLocked(new Wall { Id = "L12-right", X = 5650, Y = 5000, W = 700, H = 1700 });  // to x5300 (600 wide)
+        AddShapeGoal(new ShapeGoal { Id = "L12-goal", X = 7000, Y = 5000, W = 1100, H = 1100, TargetShapeId = id });
+        labels["L12-label"] = new WorldLabel
+        {
+            Id = "L12-label", X = 5000, Y = 3200,
+            Title = "Level 12 — Spinner",
+            Subtitle = "The bar only fits the slot end-on. Rotate it upright and thread it through.",
+        };
+    }
+
+    /// <summary>Level 13 — "Door hold". Thread a block through a tight gap; it takes two cursors to
+    /// control it steadily enough not to jam on the way through.</summary>
+    private void SeedLevel13()
+    {
+        const string id = "L13-block";
+        AddBlockLocked(new BlockState { Id = id, X = 2800, Y = 5000, W = 220, H = 220, Mass = 2.2, Color = "#7F77DD" });
+        AddWallLocked(new Wall { Id = "L13-wt", X = 5000, Y = 4100, W = 240, H = 1500 });   // gap from y4850
+        AddWallLocked(new Wall { Id = "L13-wb", X = 5000, Y = 5900, W = 240, H = 1500 });   // to y5150 (300 tall)
+        goals["L13-goal"] = new GoalZone { Id = "L13-goal", X = 7200, Y = 5000, W = 700, H = 700, TargetBlockId = id };
+        labels["L13-label"] = new WorldLabel
+        {
+            Id = "L13-label", X = 5000, Y = 3200,
+            Title = "Level 13 — Door hold",
+            Subtitle = "A tight gap. Control the block together and ease it through without snagging.",
+        };
+    }
+
+    /// <summary>Level 14 — "Long thread". The headline: a long L threaded through a tight gap into
+    /// the goal. Rotate and translate together — patience and two cursors.</summary>
+    private void SeedLevel14()
+    {
+        const string id = "L14-shape";
+        AddShapeLocked(new ShapeActor
+        {
+            Id = id, X = 2800, Y = 5000, Mass = 2.0, Color = "#D85A30",
+            Pieces =
+            [
+                new ShapePiece { LocalX = 0,    LocalY = 0,    HalfW = 260, HalfH = 70 },
+                new ShapePiece { LocalX = -190, LocalY = -190, HalfW = 70,  HalfH = 190 },
+            ],
+        });
+        AddWallLocked(new Wall { Id = "L14-wt", X = 5000, Y = 3050, W = 90, H = 3400 });   // gap from y4750
+        AddWallLocked(new Wall { Id = "L14-wb", X = 5000, Y = 6950, W = 90, H = 3400 });   // to y5250 (500 tall)
+        AddShapeGoal(new ShapeGoal { Id = "L14-goal", X = 7200, Y = 5000, W = 1600, H = 1600, TargetShapeId = id });
+        labels["L14-label"] = new WorldLabel
+        {
+            Id = "L14-label", X = 5000, Y = 2900,
+            Title = "Level 14 — Long thread",
+            Subtitle = "A meaner L through a meaner gap. Rotate, line it up, and thread it together.",
         };
     }
 }
