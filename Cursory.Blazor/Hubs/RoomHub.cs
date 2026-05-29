@@ -79,6 +79,15 @@ public class RoomHub : Hub
         return Task.CompletedTask;
     }
 
+    /// <summary>Click on a static wall — anchor this cursor to its nearest edge.</summary>
+    public Task GrabWall(string wallId, double x, double y)
+    {
+        var userId = Context.User?.FindFirst("UserId")?.Value;
+        if (string.IsNullOrEmpty(userId)) return Task.CompletedTask;
+        room.TryAttachWall(userId, wallId, x, y);
+        return Task.CompletedTask;
+    }
+
     /// <summary>Mouse up — detach this cursor.</summary>
     public Task Release()
     {

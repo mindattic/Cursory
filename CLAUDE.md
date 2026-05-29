@@ -48,12 +48,24 @@ egress on a single node — fine for the App Service tier we'd target.
   rendering and pan/zoom live on the client.
 - **Engine units**: the Aether `World` runs in metres at `PixelsPerMeter = 100`
   (a 10 000-px world = 100 m), converted at the boundary by `ToM`/`ToPx`; the
-  camelCase wire format stays in world pixels. The co-op mechanic lives in one
-  relationship: a body's `FrictionJoint.MaxForce` (`StaticFriction × FrictionForceScale`)
-  vs a single grab's `GrabMaxForce` — friction above one grab's ceiling needs two
-  cursors. Tune feel via the "Feel knobs" consts in `RoomState`.
-- **Block velocity is server-internal**: `BlockState.Vx/Vy` are `[JsonIgnore]`d —
-  the client renders from `X/Y/Angle` only, so they stay off the wire.
+  camelCase wire format stays in world pixels. Tune feel via the "Feel knobs"
+  consts in `RoomState`.
+- **Mass is the one legible dial** (`ForcePerMass`): a body's move-threshold is
+  `Mass × ForcePerMass` (its `FrictionJoint.MaxForce`) and a cursor's reported
+  pull is `force ÷ ForcePerMass`, so a body moves exactly when the pulls on it
+  sum past its Mass. One grab tops out at `SingleGrabMaxMass` (= `GrabMaxForce ÷
+  ForcePerMass`); heavier-than-that needs cooperating cursors. Inertia is scaled
+  separately (`InertiaKgPerMass`) so heft is independent of the threshold.
+  `BlockState.StaticFriction` is now **unused** (reserved). Mass is printed on
+  each block.
+- **Grabs anchor on the edge**: `TryAttach`/`TryAttachWall` project the click to
+  the nearest perimeter point (`ProjectToEdge`). Walls are grabbable too — static,
+  so the grab only tenses the tether. The anchor is sent as `CursorState.AnchorWorld*`
+  (world space, recomputed each tick) so the client needs no body-type maths;
+  `AnchorLocal*` and `Vx/Vy` are `[JsonIgnore]`d (server-internal).
+- **Solid cursor**: `SetCursorPosition` ejects the cursor from any wall AABB
+  (`ResolveOutOfWalls`); room.js mirrors it for feel. Raw click coords (not the
+  resolved cursor) drive grab picking, so you can still grab a wall edge.
 - **Password policy is strict; seeded users bypass it.** `SeedUser` writes the
   BCrypt hash directly and is idempotent. `CreateUser` enforces ≥ 8 chars,
   upper + lower + digit + special. The two seeded accounts (`gungreeneyes`,

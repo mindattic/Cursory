@@ -37,6 +37,7 @@ const state = {
     snapshot: { tick: 0, cursors: [], blocks: [], goals: [], switches: [], doors: [], shapes: [], shapeGoals: [], whistles: [] },
     attachedBlockId: null,
     attachedShapeId: null,
+    attachedWallId: null,
     lastSent: 0,
     whistleAnims: [], // {x, y, color, t0}
     seenWhistles: new Map(), // "userId:tick" -> performance.now() first seen. A whistle rides
@@ -84,10 +85,11 @@ export async function start(opts) {
         // the custom context menu via its own handler) and must not start a grab.
         if (e.button !== 0) return;
         ensureAudio();
+        // Raw world point (the hardware mouse) is used for picking — it can be over a wall even
+        // though the rendered cursor is held at the wall's edge — so you can still grab a wall.
         const world = clientToWorld(e.clientX, e.clientY);
-        state.mouseWorld = world;
-        // Shape hit-test runs first — compound rigid bodies sit "on top of" simple blocks
-        // in the click-pick order. If neither hits, we fall through to whistle/pan.
+        state.mouseWorld = resolveOutOfWalls({ x: world.x, y: world.y });
+        // Pick order: shape (on top) → block → wall → empty space (whistle/pan).
         const shapeHit = pickShape(world.x, world.y);
         if (shapeHit && connection) {
             state.attachedShapeId = shapeHit.id;
@@ -98,6 +100,12 @@ export async function start(opts) {
         if (hit && connection) {
             state.attachedBlockId = hit.id;
             connection.invoke('Grab', hit.id, world.x, world.y).catch(noop);
+            return;
+        }
+        const wallHit = pickWall(world.x, world.y);
+        if (wallHit && connection) {
+            state.attachedWallId = wallHit.id;
+            connection.invoke('GrabWall', wallHit.id, world.x, world.y).catch(noop);
             return;
         }
         // Empty-space mousedown — arm a pending whistle+pan; commit on movement or mouseup.
@@ -125,8 +133,7 @@ export async function start(opts) {
             state.cam.x = clamp(state.pan.ox - dx, 0, state.world.width);
             state.cam.y = clamp(state.pan.oy - dy, 0, state.world.height);
         }
-        const world = clientToWorld(e.clientX, e.clientY);
-        state.mouseWorld = world;
+        state.mouseWorld = resolveOutOfWalls(clientToWorld(e.clientX, e.clientY));
     };
     const onMouseUp = () => {
         if (state.pan.active) {
@@ -142,9 +149,10 @@ export async function start(opts) {
             }
         }
         armed = null;
-        if ((state.attachedBlockId || state.attachedShapeId) && connection) {
+        if ((state.attachedBlockId || state.attachedShapeId || state.attachedWallId) && connection) {
             state.attachedBlockId = null;
             state.attachedShapeId = null;
+            state.attachedWallId = null;
             connection.invoke('Release').catch(noop);
         }
     };
@@ -161,7 +169,7 @@ export async function start(opts) {
         const after = clientToWorld(e.clientX, e.clientY);
         state.cam.x = clamp(state.cam.x + (before.x - after.x), 0, state.world.width);
         state.cam.y = clamp(state.cam.y + (before.y - after.y), 0, state.world.height);
-        state.mouseWorld = clientToWorld(e.clientX, e.clientY);
+        state.mouseWorld = resolveOutOfWalls(clientToWorld(e.clientX, e.clientY));
     };
 
     // Losing window focus: a mouseup can land off-canvas and never reach us, leaving a pan or
@@ -442,6 +450,15 @@ function drawBlocks() {
         ctx.fillRect(-b.w / 2, -b.h / 2, b.w, b.h);
         ctx.strokeRect(-b.w / 2, -b.h / 2, b.w, b.h);
         ctx.restore();
+        // Mass, drawn upright (not in the body frame) and centred — the legible number the
+        // co-op rule keys off: a body moves only when the pulls on it sum past this.
+        if (b.mass != null) {
+            ctx.fillStyle = 'rgba(255,255,255,0.92)';
+            ctx.font = '600 ' + Math.max(22, Math.min(b.w, b.h) * 0.3) + 'px system-ui';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(String(b.mass), b.x, b.y);
+        }
     }
 }
 
@@ -453,13 +470,18 @@ function cursorRenderPos(c) {
     return { x: c.x, y: c.y };
 }
 
-// World position of a cursor's grab anchor on a (rotated) block.
-function blockAnchorWorld(b, c) {
-    const cos = Math.cos(b.angle || 0), sin = Math.sin(b.angle || 0);
-    return [
-        b.x + c.anchorLocalX * cos - c.anchorLocalY * sin,
-        b.y + c.anchorLocalX * sin + c.anchorLocalY * cos,
-    ];
+// Push a point out of any wall it lands inside (nearest-edge ejection) so the rendered cursor
+// can't penetrate solid walls. Mirrors RoomState.ResolveOutOfWalls; the server does the same to
+// the authoritative position. Mutates and returns the point.
+function resolveOutOfWalls(p) {
+    for (const w of state.geometry.walls) {
+        const hw = w.w / 2, hh = w.h / 2;
+        const dx = p.x - w.x, dy = p.y - w.y;
+        if (Math.abs(dx) >= hw || Math.abs(dy) >= hh) continue;
+        if (hw - Math.abs(dx) < hh - Math.abs(dy)) p.x = w.x + (dx >= 0 ? hw : -hw);
+        else p.y = w.y + (dy >= 0 ? hh : -hh);
+    }
+    return p;
 }
 
 // The rendered pull line stops at the distance where a grab hits its max force, so a
@@ -521,17 +543,14 @@ function drawSwitches() {
 }
 
 function drawAttachLines() {
-    // For each attached cursor, draw a line from anchor (in world) to cursor.
-    const blockById = new Map();
-    for (const b of state.snapshot.blocks || []) blockById.set(b.id, b);
+    // For each attached cursor draw the tether anchor → cursor. The anchor is server-provided
+    // in world space (c.anchorWorld*), so this is identical for a rotating block or a static
+    // wall — no body lookup or local-frame maths on the client.
     for (const c of state.snapshot.cursors || []) {
-        if (!c.attachedBlockId) continue;
-        const b = blockById.get(c.attachedBlockId);
-        if (!b) continue;
+        if (!c.attachedBlockId && !c.attachedWallId && !c.attachedShapeId) continue;
+        const ax = c.anchorWorldX, ay = c.anchorWorldY;
         const p = cursorRenderPos(c);
-        const [ax, ay] = blockAnchorWorld(b, c);
-        // Truncate the line at the max-force reach. The full segment would run anchor → cursor;
-        // we draw at most MAX_PULL_PX of it so an over-stretched pull reads as "maxed out".
+        // Truncate at the max-force reach so an over-stretched pull reads as "maxed out".
         const dx = p.x - ax, dy = p.y - ay;
         const dist = Math.hypot(dx, dy) || 1;
         const reach = Math.min(dist, MAX_PULL_PX);
@@ -548,42 +567,32 @@ function drawAttachLines() {
         ctx.beginPath();
         ctx.arc(ax, ay, 4, 0, Math.PI * 2);
         ctx.fill();
-        // Max-reach cap marker when the player is pulling at full force.
+        // Max-reach cap marker when pulling at full force.
         if (maxed) {
             ctx.beginPath();
             ctx.arc(ex, ey, 5, 0, Math.PI * 2);
             ctx.stroke();
         }
+        // Pull strength (mass-units) reported at the cursor end of the tether.
+        if (typeof c.pullMass === 'number') {
+            ctx.fillStyle = withAlpha(c.color, maxed ? 1 : 0.85);
+            ctx.font = '600 16px system-ui';
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'bottom';
+            ctx.fillText(c.pullMass.toFixed(1), p.x + 14, p.y - 10);
+        }
     }
 }
 
 function drawCursors() {
-    // Pre-build lookup maps so we don't pay an O(N) find inside the per-cursor render
-    // loop. Same idea covers both attachment kinds: blocks (axis-aligned) and shapes
-    // (rotated rigid bodies).
-    const blockById = new Map();
-    for (const b of state.snapshot.blocks || []) blockById.set(b.id, b);
-    const shapeById = new Map();
-    for (const s of state.snapshot.shapes || []) shapeById.set(s.id, s);
     for (const c of state.snapshot.cursors || []) {
         const isMe = c.userId === state.me.userId;
         const p = cursorRenderPos(c);
-        // Rotation: if attached, point inward at anchor; otherwise point up.
+        // If attached to anything (block, wall, or shape), lean the arrow toward the world
+        // anchor — you can see what each cursor is pulling on, including a wall that won't move.
         let rot = 0;
-        if (c.attachedBlockId) {
-            const b = blockById.get(c.attachedBlockId);
-            if (b) {
-                const [ax, ay] = blockAnchorWorld(b, c);
-                rot = Math.atan2(ay - p.y, ax - p.x);
-            }
-        } else if (c.attachedShapeId) {
-            const s = shapeById.get(c.attachedShapeId);
-            if (s) {
-                const cos = Math.cos(s.angle), sin = Math.sin(s.angle);
-                const ax = s.x + c.anchorLocalX * cos - c.anchorLocalY * sin;
-                const ay = s.y + c.anchorLocalX * sin + c.anchorLocalY * cos;
-                rot = Math.atan2(ay - p.y, ax - p.x);
-            }
+        if (c.attachedBlockId || c.attachedWallId || c.attachedShapeId) {
+            rot = Math.atan2(c.anchorWorldY - p.y, c.anchorWorldX - p.x);
         }
         drawArrow(p.x, p.y, rot, c.color, isMe);
         // Name tag. Set the font BEFORE measuring — measureText uses the current ctx.font, so
@@ -802,6 +811,14 @@ function pickBlock(wx, wy) {
         const lx = dx * cos - dy * sin;
         const ly = dx * sin + dy * cos;
         if (lx > -b.w / 2 && lx < b.w / 2 && ly > -b.h / 2 && ly < b.h / 2) return b;
+    }
+    return null;
+}
+
+function pickWall(wx, wy) {
+    // Walls are axis-aligned static rects (geometry, not snapshot). Plain AABB test.
+    for (const w of state.geometry.walls) {
+        if (wx > w.x - w.w / 2 && wx < w.x + w.w / 2 && wy > w.y - w.h / 2 && wy < w.y + w.h / 2) return w;
     }
     return null;
 }

@@ -20,21 +20,21 @@ public class RoomStateTests
         Id = id, X = CX, Y = CY, W = size, H = size, Mass = mass, StaticFriction = friction,
     };
 
-    /// <summary>A grab anchors at the point under the cursor (clamped to the body), not a corner —
-    /// off-centre, non-corner grabs are what give the body interesting torque.</summary>
+    /// <summary>A grab snaps to the nearest point on the body's edge, not the interior click —
+    /// the click's nearest axis is pushed out to the rim. You grab the edge of an object.</summary>
     [Test]
-    public void Grab_anchors_at_click_point()
+    public void Grab_anchors_at_nearest_edge()
     {
         var room = new RoomState();
         room.AddTestCursor("u1", CX, CY);
-        room.AddBlock(Block("b", mass: 4, friction: 0.4, size: 260));   // corners at ±130
-        // Click off-centre but well inside the block — not at a corner.
+        room.AddBlock(Block("b", mass: 4, friction: 0.4, size: 260));   // edges at ±130
+        // Click off-centre, nearest the right edge (dx 110 → 20 from the right edge).
         room.TryAttach("u1", "b", CX + 110, CY - 100);
 
         var c = room.GetCursor("u1")!;
         Assert.That(c.AttachedBlockId, Is.EqualTo("b"));
-        Assert.That(c.AnchorLocalX, Is.EqualTo(110).Within(1.0), "anchor X should track the click point");
-        Assert.That(c.AnchorLocalY, Is.EqualTo(-100).Within(1.0), "anchor Y should track the click point");
+        Assert.That(c.AnchorLocalX, Is.EqualTo(130).Within(1.0), "X snaps out to the nearest (right) edge");
+        Assert.That(c.AnchorLocalY, Is.EqualTo(-100).Within(1.0), "Y stays at the click");
     }
 
     /// <summary>A grab beyond the block's edge clamps to the body rather than anchoring in space.</summary>
@@ -51,13 +51,30 @@ public class RoomStateTests
         Assert.That(c.AnchorLocalY, Is.EqualTo(130).Within(1.0), "anchor Y clamps to +half-height");
     }
 
+    /// <summary>A grab reports its pull in mass-units, capped at a single grab's ceiling.</summary>
+    [Test]
+    public void Grab_reports_pull_in_mass_units()
+    {
+        var room = new RoomState();
+        room.AddTestCursor("u1", CX, CY);
+        var b = Block("b", mass: 1, friction: 0.2);
+        room.AddBlock(b);
+        room.TryAttach("u1", "b", CX, CY);
+        room.GetCursor("u1")!.X = CX + 800;            // pull well past the saturation reach
+        for (var i = 0; i < 10; i++) room.Step();
+
+        var pull = room.GetCursor("u1")!.PullMass;
+        Assert.That(pull, Is.GreaterThan(0));
+        Assert.That(pull, Is.LessThanOrEqualTo(RoomState.SingleGrabMaxMass + 1e-6));
+    }
+
     /// <summary>A light, low-friction block can be dragged by a single cursor (the Level 1 feel).</summary>
     [Test]
     public void Single_cursor_moves_light_block()
     {
         var room = new RoomState();
         room.AddTestCursor("u1", CX, CY);
-        var b = Block("b", mass: 2, friction: 0.2);
+        var b = Block("b", mass: 1, friction: 0.2);   // mass 1 < single-grab ceiling (1.5)
         room.AddBlock(b);
         room.TryAttach("u1", "b", CX, CY);
         room.GetCursor("u1")!.X = CX + 800;   // pull hard to the right
@@ -91,7 +108,7 @@ public class RoomStateTests
         var room = new RoomState();
         room.AddTestCursor("u1", CX, CY);
         room.AddTestCursor("u2", CX, CY);
-        var b = Block("b", mass: 10, friction: 2.0, size: 260);
+        var b = Block("b", mass: 2, friction: 2.0, size: 260);   // mass 2: one grab (1.5) can't, two (≤3) can
         room.AddBlock(b);
         // Both grab the same corner, both pull right — forces stack.
         room.TryAttach("u1", "b", CX + 130, CY - 130);
@@ -131,7 +148,7 @@ public class RoomStateTests
         var room = new RoomState();
         room.AddTestCursor("u1", CX, CY);
         room.AddTestCursor("u2", CX, CY);
-        var b = Block("b", mass: 6, friction: 0.6, size: 300);   // corners at ±150
+        var b = Block("b", mass: 1, friction: 0.6, size: 300);   // corners at ±150
         room.AddBlock(b);
         room.TryAttach("u1", "b", CX - 150, CY - 150);   // top-left
         room.TryAttach("u2", "b", CX + 150, CY + 150);   // bottom-right
@@ -149,7 +166,7 @@ public class RoomStateTests
     {
         var room = new RoomState();
         room.AddTestCursor("u1", CX, CY);
-        var b = Block("b", mass: 2, friction: 0.2);
+        var b = Block("b", mass: 1, friction: 0.2);   // light enough for one cursor to get it moving
         room.AddBlock(b);
         room.TryAttach("u1", "b", CX, CY);
         room.GetCursor("u1")!.X = CX + 800;

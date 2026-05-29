@@ -25,11 +25,24 @@ public class CursorState
     public string? AttachedBlockId { get; set; }
     /// <summary>Compound shape (ShapeActor) this cursor is attached to, if any. Mutually exclusive with AttachedBlockId.</summary>
     public string? AttachedShapeId { get; set; }
-    /// <summary>Anchor in the body's local space. For blocks (axis-aligned), local = world − block centre.
-    /// For shapes, local space is the body frame BEFORE rotation; the world anchor each tick is
-    /// (X,Y) + Rotate(anchorLocal, Angle).</summary>
-    public double AnchorLocalX { get; set; }
-    public double AnchorLocalY { get; set; }
+    /// <summary>Static wall this cursor is anchored to, if any. The wall never moves, so the
+    /// grab just tenses the tether (the cursor rotates toward the anchor); mutually exclusive
+    /// with the other two.</summary>
+    public string? AttachedWallId { get; set; }
+    /// <summary>Anchor in the body's local space (server-internal). For blocks/walls, local =
+    /// the un-rotated offset from the body centre to the grabbed edge point. Kept off the wire —
+    /// the client draws from <see cref="AnchorWorldX"/>/<see cref="AnchorWorldY"/>.</summary>
+    [JsonIgnore] public double AnchorLocalX { get; set; }
+    [JsonIgnore] public double AnchorLocalY { get; set; }
+    /// <summary>The grab anchor in world space, recomputed each tick from the body's current
+    /// pose. The client draws the tether (and points the cursor) at this — works the same for a
+    /// rotating block, a static wall, or (later) a shape, with no body-type logic on the client.</summary>
+    public double AnchorWorldX { get; set; }
+    public double AnchorWorldY { get; set; }
+    /// <summary>How hard this cursor is pulling, in mass-units (force ÷ ForcePerMass), capped at
+    /// a single grab's ceiling. A body moves once the pulls on it sum past its Mass. Shown at the
+    /// tether end; 0 when not grabbing.</summary>
+    public double PullMass { get; set; }
 }
 
 /// <summary>
@@ -50,9 +63,13 @@ public class BlockState
     /// <summary>Body-frame rotation in radians, anti-clockwise from world x-axis. Real
     /// rigid bodies rotate when cursors pull at different corners; the client renders this.</summary>
     public double Angle { get; set; }
+    /// <summary>The body's mass — drives both inertia and the move-threshold: the pulls on it
+    /// must sum past this (in mass-units) to break it free. Printed on the block; a single grab
+    /// tops out around <see cref="Services.RoomState.SingleGrabMaxMass"/>.</summary>
     public double Mass { get; set; } = 6;
-    /// <summary>Friction magnitude. Seeds the body's FrictionJoint MaxForce (top-down dry
-    /// friction): a grab whose force ceiling is below this can't move the body alone.</summary>
+    /// <summary>Reserved. Not currently wired into the engine — the move-threshold is derived
+    /// from <see cref="Mass"/>. Kept on the record for level data and a possible future
+    /// per-surface friction multiplier.</summary>
     public double StaticFriction { get; set; } = 1.2;
     public string Color { get; set; } = "#3a3a3a";
 }

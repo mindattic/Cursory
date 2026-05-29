@@ -33,6 +33,7 @@ public class RoomState
     private readonly World world = new(Vector2.Zero);   // gravity off — top-down
     private Body ground;                                  // FrictionJoint anchor
     private readonly Dictionary<string, Body> bodyByBlock = new();
+    private readonly Dictionary<string, Body> bodyByWall = new();
     private readonly Dictionary<string, FixedMouseJoint> grabByUser = new();
 
     /// <summary>World units (pixels) per simulation metre. 10 000-px world = 100 m; a 140-px
@@ -49,10 +50,21 @@ public class RoomState
     private const float GrabMaxForce = 60f;
     private const float GrabFrequency = 5f;               // soft-constraint stiffness (Hz)
     private const float GrabDamping = 0.7f;
-    /// <summary>Newtons of linear friction per unit of <see cref="BlockState.StaticFriction"/>.</summary>
-    private const float FrictionForceScale = 50f;
+    /// <summary>Newtons per mass-unit — the single dial that ties everything to the legible
+    /// "mass" number. A body's friction (move-threshold) is Mass × this, and a pull's reported
+    /// strength is force ÷ this. So a body moves exactly when the pulls on it sum past its Mass.</summary>
+    private const float ForcePerMass = 40f;
+    /// <summary>Kilograms of inertia per mass-unit. Decoupled from the threshold so a body can be
+    /// hefty (slow to accelerate) without changing how many cursors it takes to break free.</summary>
+    private const float InertiaKgPerMass = 5f;
     /// <summary>Rotational friction (N·m) as a multiple of a body's linear friction.</summary>
     private const float FrictionTorqueScale = 1.2f;
+    /// <summary>A single grab's pull ceiling in mass-units (GrabMaxForce ÷ ForcePerMass). One
+    /// cursor can move anything below this; cooperating cursors stack toward N× it.</summary>
+    public const double SingleGrabMaxMass = GrabMaxForce / ForcePerMass;
+    /// <summary>Tether length (world px) at which a pull saturates to <see cref="SingleGrabMaxMass"/>.
+    /// Matches room.js's MAX_PULL_PX so the rendered line and the reported number agree.</summary>
+    private const double MaxPullPx = 240;
 
     // ── state ─────────────────────────────────────────────────────────────────
     private readonly ConcurrentDictionary<string, CursorState> cursors = new();
@@ -150,13 +162,34 @@ public class RoomState
     {
         if (!cursors.TryGetValue(userId, out var c)) return false;
         if (!IsFinite(x) || !IsFinite(y)) return true;
-        c.X = Math.Clamp(x, 0, WorldGeometry.Width);
-        c.Y = Math.Clamp(y, 0, WorldGeometry.Height);
+        x = Math.Clamp(x, 0, WorldGeometry.Width);
+        y = Math.Clamp(y, 0, WorldGeometry.Height);
+        // Solid cursor: the pointer can't enter a wall — push it back to the nearest surface.
+        // The client resolves the same way for feel; this is the authoritative copy. (The raw
+        // click used for grabbing is separate, so you can still grab a wall's edge.)
+        (c.X, c.Y) = ResolveOutOfWalls(x, y);
         c.LastInputTick = CurrentTick;
         return true;
     }
 
     private static bool IsFinite(double v) => !double.IsNaN(v) && !double.IsInfinity(v);
+
+    /// <summary>Push a point out of any wall it lands inside, along the shallowest axis (nearest
+    /// edge). Walls are axis-aligned, so this is a cheap AABB ejection; mirrors room.js.</summary>
+    private (double X, double Y) ResolveOutOfWalls(double x, double y)
+    {
+        foreach (var w in walls.Values)
+        {
+            var hw = w.W / 2;
+            var hh = w.H / 2;
+            var dx = x - w.X;
+            var dy = y - w.Y;
+            if (Math.Abs(dx) >= hw || Math.Abs(dy) >= hh) continue;   // outside this wall
+            if (hw - Math.Abs(dx) < hh - Math.Abs(dy)) x = w.X + (dx >= 0 ? hw : -hw);
+            else y = w.Y + (dy >= 0 ? hh : -hh);
+        }
+        return (x, y);
+    }
 
     /// <summary>
     /// Grab a block at the point under the cursor (clamped to the body, not snapped to a
@@ -174,19 +207,17 @@ public class RoomState
 
             DetachLocked(userId);
 
-            // Anchor at the point on the body directly under the cursor tip — un-rotate the
-            // click into the body frame and clamp it to the block's extent. Grabbing where you
-            // actually clicked (rather than snapping to the nearest corner) is what makes the
-            // torque interesting: an edge or off-centre pull pivots the body the way you'd
-            // expect, instead of every grab behaving like a corner handle.
+            // Anchor on the body's edge nearest the cursor — un-rotate the click into the body
+            // frame, then project it onto the perimeter. You grab the rim, not the interior; an
+            // edge/corner grab gives the body real torque, and where on the edge you grab is the
+            // interesting part of the physics.
             var dx = clickX - b.X;
             var dy = clickY - b.Y;
             var cosN = Math.Cos(-b.Angle);
             var sinN = Math.Sin(-b.Angle);
-            var localX = Math.Clamp(dx * cosN - dy * sinN, -b.W / 2, b.W / 2);
-            var localY = Math.Clamp(dx * sinN + dy * cosN, -b.H / 2, b.H / 2);
+            var (localX, localY) = ProjectToEdge(dx * cosN - dy * sinN, dx * sinN + dy * cosN, b.W / 2, b.H / 2);
 
-            // Rotate the (clamped) local anchor back into world space for the joint.
+            // Rotate the local anchor back into world space for the joint.
             var cosP = Math.Cos(b.Angle);
             var sinP = Math.Sin(b.Angle);
             var anchorWX = b.X + localX * cosP - localY * sinP;
@@ -214,6 +245,58 @@ public class RoomState
     /// so the hub contract is preserved while levels 3–14 are re-ported.</summary>
     public bool TryAttachShape(string userId, string shapeId, double clickX, double clickY) => false;
 
+    /// <summary>
+    /// Anchor to a static wall at its nearest edge. The wall never moves, so there's no joint —
+    /// the grab just records the tether so the client tenses the cursor toward the anchor and
+    /// reports the (futile) pull. Releasing is the same <see cref="Detach"/> as any other grab.
+    /// </summary>
+    public bool TryAttachWall(string userId, string wallId, double clickX, double clickY)
+    {
+        if (!cursors.TryGetValue(userId, out var c)) return false;
+        if (!IsFinite(clickX) || !IsFinite(clickY)) return false;
+        lock (worldLock)
+        {
+            if (!walls.TryGetValue(wallId, out var w)) return false;
+            DetachLocked(userId);
+            var (localX, localY) = ProjectToEdge(clickX - w.X, clickY - w.Y, w.W / 2, w.H / 2);
+            c.AttachedBlockId = null;
+            c.AttachedShapeId = null;
+            c.AttachedWallId = wallId;
+            c.AnchorLocalX = localX;
+            c.AnchorLocalY = localY;
+            return true;
+        }
+    }
+
+    /// <summary>Clamp a body-local point into the box, then snap it to whichever of the four
+    /// edges is nearest — i.e. the closest point on the perimeter. Grabs land on the rim.</summary>
+    private static (double X, double Y) ProjectToEdge(double lx, double ly, double hw, double hh)
+    {
+        lx = Math.Clamp(lx, -hw, hw);
+        ly = Math.Clamp(ly, -hh, hh);
+        var toLeft = lx + hw;
+        var toRight = hw - lx;
+        var toTop = ly + hh;
+        var toBottom = hh - ly;
+        var min = Math.Min(Math.Min(toLeft, toRight), Math.Min(toTop, toBottom));
+        if (min == toRight) lx = hw;
+        else if (min == toLeft) lx = -hw;
+        else if (min == toBottom) ly = hh;
+        else ly = -hh;
+        return (lx, ly);
+    }
+
+    /// <summary>Reported pull strength of a grab, in mass-units: the tether stretch saturated to
+    /// a single grab's ceiling. Matches the soft constraint closely enough to read against a
+    /// body's Mass ("1.2 / 2 → not yet").</summary>
+    private double PullMassFor(CursorState c)
+    {
+        var dx = c.X - c.AnchorWorldX;
+        var dy = c.Y - c.AnchorWorldY;
+        var frac = Math.Clamp(Math.Sqrt(dx * dx + dy * dy) / MaxPullPx, 0, 1);
+        return SingleGrabMaxMass * frac;
+    }
+
     /// <summary>Release whatever this cursor is holding.</summary>
     public void Detach(string userId)
     {
@@ -223,11 +306,13 @@ public class RoomState
     private void DetachLocked(string userId)
     {
         if (grabByUser.Remove(userId, out var joint))
-            world.Remove(joint);
+            world.Remove(joint);   // walls have no joint — only block grabs are in grabByUser
         if (cursors.TryGetValue(userId, out var c))
         {
             c.AttachedBlockId = null;
             c.AttachedShapeId = null;
+            c.AttachedWallId = null;
+            c.PullMass = 0;
         }
     }
 
@@ -422,17 +507,20 @@ public class RoomState
     {
         blocks[b.Id] = b;
 
+        // Inertia (kg) scales with Mass but is decoupled from the move-threshold below, so a
+        // body can feel heavy to accelerate without changing how many cursors it takes to budge.
         var areaM2 = ToM(b.W) * ToM(b.H);
-        var density = areaM2 > 1e-6f ? (float)b.Mass / areaM2 : 1f;
+        var inertiaKg = (float)b.Mass * InertiaKgPerMass;
+        var density = areaM2 > 1e-6f ? inertiaKg / areaM2 : 1f;
         var body = world.CreateRectangle(
             ToM(b.W), ToM(b.H), density, ToMVec(b.X, b.Y), (float)b.Angle, BodyType.Dynamic);
         body.LinearDamping = LinearDamping;
         body.AngularDamping = AngularDamping;
 
-        // Top-down dry friction: a FrictionJoint to the static ground. MaxForce is what makes
-        // a block "too heavy for one cursor" — if it exceeds a single grab's GrabMaxForce the
-        // body can't be dragged solo, but two grabs combine to break it.
-        var linFric = (float)b.StaticFriction * FrictionForceScale;
+        // Top-down dry friction: a FrictionJoint to the static ground. MaxForce = Mass × ForcePerMass
+        // is the move-threshold — the pulls on the body must sum past its Mass to break it free, so
+        // a body heavier than one grab's ceiling (SingleGrabMaxMass) needs cooperating cursors.
+        var linFric = (float)b.Mass * ForcePerMass;
         var fric = new FrictionJoint(ground, body, body.WorldCenter, true)
         {
             MaxForce = linFric,
@@ -446,11 +534,14 @@ public class RoomState
     /// <summary>Test/seed helper: add a static wall (collidable engine body + geometry record).</summary>
     internal void AddWall(Wall w)
     {
-        lock (worldLock)
-        {
-            walls[w.Id] = w;
-            world.CreateRectangle(ToM(w.W), ToM(w.H), 1f, ToMVec(w.X, w.Y), 0f, BodyType.Static);
-        }
+        lock (worldLock) AddWallLocked(w);
+    }
+
+    private void AddWallLocked(Wall w)
+    {
+        walls[w.Id] = w;
+        bodyByWall[w.Id] = world.CreateRectangle(
+            ToM(w.W), ToM(w.H), 1f, ToMVec(w.X, w.Y), 0f, BodyType.Static);
     }
 
     /// <summary>Test/seed helper: add a goal zone (pure data; solved-check runs in Step).</summary>
@@ -504,8 +595,9 @@ public class RoomState
     {
         UserId = c.UserId, DisplayName = c.DisplayName, Color = c.Color, ConnectionId = c.ConnectionId,
         X = c.X, Y = c.Y, LastInputTick = c.LastInputTick,
-        AttachedBlockId = c.AttachedBlockId, AttachedShapeId = c.AttachedShapeId,
+        AttachedBlockId = c.AttachedBlockId, AttachedShapeId = c.AttachedShapeId, AttachedWallId = c.AttachedWallId,
         AnchorLocalX = c.AnchorLocalX, AnchorLocalY = c.AnchorLocalY,
+        AnchorWorldX = c.AnchorWorldX, AnchorWorldY = c.AnchorWorldY, PullMass = c.PullMass,
     };
     private static BlockState CloneBlock(BlockState b) => new()
     {
@@ -553,6 +645,31 @@ public class RoomState
                 b.Vx = ToPx(body.LinearVelocity.X);
                 b.Vy = ToPx(body.LinearVelocity.Y);
             }
+
+            // Tether anchor (world) + reported pull for every grabbing cursor, from the fresh
+            // body pose. Anchors are stored body-local so they ride a rotating block correctly;
+            // a wall is static so its anchor is fixed.
+            foreach (var c in cursors.Values)
+            {
+                if (c.AttachedBlockId is { } bid && blocks.TryGetValue(bid, out var ab))
+                {
+                    var cos = Math.Cos(ab.Angle);
+                    var sin = Math.Sin(ab.Angle);
+                    c.AnchorWorldX = ab.X + c.AnchorLocalX * cos - c.AnchorLocalY * sin;
+                    c.AnchorWorldY = ab.Y + c.AnchorLocalX * sin + c.AnchorLocalY * cos;
+                    c.PullMass = PullMassFor(c);
+                }
+                else if (c.AttachedWallId is { } wid && walls.TryGetValue(wid, out var aw))
+                {
+                    c.AnchorWorldX = aw.X + c.AnchorLocalX;
+                    c.AnchorWorldY = aw.Y + c.AnchorLocalY;
+                    c.PullMass = PullMassFor(c);
+                }
+                else
+                {
+                    c.PullMass = 0;
+                }
+            }
         }
 
         foreach (var g in goals.Values)
@@ -596,6 +713,7 @@ public class RoomState
             world.Clear();
             ground = world.CreateBody(Vector2.Zero, 0f, BodyType.Static);
             bodyByBlock.Clear();
+            bodyByWall.Clear();
             grabByUser.Clear();
             blocks.Clear();
             goals.Clear();
@@ -627,7 +745,7 @@ public class RoomState
         AddBlockLocked(new BlockState
         {
             Id = blockId, X = 3500, Y = 5000, W = 160, H = 160,
-            Mass = 2, StaticFriction = 0.2, Color = "#D85A30",
+            Mass = 1, Color = "#D85A30",
         });
         goals["L1-goal"] = new GoalZone
         {
@@ -637,7 +755,7 @@ public class RoomState
         {
             Id = "L1-label", X = 5000, Y = 3500,
             Title = "Level 1 — Drop it on the pad",
-            Subtitle = "Click the block and drag it into the big square. Feel the weight.",
+            Subtitle = "Click the block's edge and drag it into the big square. The number is its mass.",
         };
     }
 
@@ -652,18 +770,21 @@ public class RoomState
         const string blockId = "L2-block";
         AddBlockLocked(new BlockState
         {
-            Id = blockId, X = 3500, Y = 5000, W = 260, H = 260,
-            Mass = 10, StaticFriction = 2.0, Color = "#378ADD",
+            Id = blockId, X = 3000, Y = 5000, W = 260, H = 260,
+            Mass = 2, Color = "#378ADD",
         });
+        // A wall the team has to route the block around — and that your cursor can't pass
+        // through (try grabbing its edge: the wall won't budge, but your cursor tenses toward it).
+        AddWallLocked(new Wall { Id = "L2-wall", X = 5000, Y = 5000, W = 180, H = 1200 });
         goals["L2-goal"] = new GoalZone
         {
-            Id = "L2-goal", X = 6500, Y = 5000, W = 700, H = 700, TargetBlockId = blockId,
+            Id = "L2-goal", X = 6700, Y = 5000, W = 700, H = 700, TargetBlockId = blockId,
         };
         labels["L2-label"] = new WorldLabel
         {
             Id = "L2-label", X = 5000, Y = 3500,
             Title = "Level 2 — Too heavy for one",
-            Subtitle = "One cursor can't move it. Two of you, grab opposite corners, pull together.",
+            Subtitle = "Mass 2: one cursor (max ~1.5) can't. Two of you grab edges and pull around the wall.",
         };
     }
 }
