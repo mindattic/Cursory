@@ -247,8 +247,7 @@ public class RoomStateTests
     [Test]
     public void Segmented_tether_wrap_spins_the_body()
     {
-        Assert.That(RoomState.IsSegmentedTether, Is.True);
-        var room = new RoomState();
+        var room = new RoomState { SegmentedTether = true };
         room.AddTestCursor("u1", CX, CY);
         var b = Block("b", mass: 1, friction: 0.2, size: 200);   // light + low friction
         room.AddBlock(b);
@@ -270,7 +269,7 @@ public class RoomStateTests
     [Test]
     public void Segmented_tether_catches_a_corner_behind_the_body()
     {
-        var room = new RoomState();
+        var room = new RoomState { SegmentedTether = true };
         room.AddTestCursor("u1", CX, CY);
         var b = Block("b", mass: 6, friction: 3.0, size: 200);   // heavy: holds still while we wrap it
         room.AddBlock(b);

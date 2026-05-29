@@ -77,11 +77,12 @@ public class RoomState
     /// point, so a fast 30 Hz frame can't land its centre exactly on a wall seam and slip through;
     /// solids are inflated by this when ejecting. Small enough not to feel "fat".</summary>
     private const double CursorRadius = 10;
-    /// <summary>When true, a tether catches on the corner of the body it's wrapping: as the cursor
-    /// swings around past a corner, the grab's contact point hops to that corner (the joint is
-    /// re-anchored there), so pulling tangentially spins the body — wrap it like a top. v1 tracks
-    /// a single contact corner; a full multi-segment rope is the next iteration.</summary>
-    public const bool IsSegmentedTether = true;
+    /// <summary>Room-wide toggle for the multi-segment wrapping tether: when on, the rope catches
+    /// on a body's corners as the cursor swings behind it, accumulating pivots and spinning the
+    /// body when pulled. Off (the default) = a plain straight tether. Settable at runtime (menu
+    /// toggle); read on the physics thread, so backed by a volatile field.</summary>
+    private volatile bool segmentedTether = false;
+    public bool SegmentedTether { get => segmentedTether; set => segmentedTether = value; }
 
     // ── state ─────────────────────────────────────────────────────────────────
     private readonly ConcurrentDictionary<string, CursorState> cursors = new();
@@ -713,7 +714,7 @@ public class RoomState
     }
 
     /// <summary>Straight (un-segmented) tether: anchor world from the fixed body-local point, and a
-    /// single-point pivot chain. Used for walls and when <see cref="IsSegmentedTether"/> is off.</summary>
+    /// single-point pivot chain. Used for walls and when <see cref="SegmentedTether"/> is off.
     private static void SetStraightAnchor(CursorState c, double bodyX, double bodyY, double angle)
     {
         var cos = Math.Cos(angle);
@@ -1224,7 +1225,7 @@ public class RoomState
             {
                 if (c.AttachedBlockId is { } bid && blocks.TryGetValue(bid, out var ab))
                 {
-                    if (IsSegmentedTether && bodyByBlock.TryGetValue(bid, out var bbody))
+                    if (segmentedTether && bodyByBlock.TryGetValue(bid, out var bbody))
                         UpdateTether(c, bbody, BlockCornersWorld(ab), [(0, 0, ab.W / 2, ab.H / 2)], ab.X, ab.Y, ab.Angle);
                     else
                         SetStraightAnchor(c, ab.X, ab.Y, ab.Angle);
@@ -1232,7 +1233,7 @@ public class RoomState
                 }
                 else if (c.AttachedShapeId is { } sid && shapes.TryGetValue(sid, out var ash))
                 {
-                    if (IsSegmentedTether && bodyByShape.TryGetValue(sid, out var sbody))
+                    if (segmentedTether && bodyByShape.TryGetValue(sid, out var sbody))
                         UpdateTether(c, sbody, ShapeCornersWorld(ash),
                             ash.Pieces.Select(p => (p.LocalX, p.LocalY, p.HalfW, p.HalfH)).ToList(),
                             ash.X, ash.Y, ash.Angle);
