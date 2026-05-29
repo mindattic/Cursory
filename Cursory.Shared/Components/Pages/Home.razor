@@ -13,23 +13,31 @@
         <span class="room-hud-dot" style="background:@Color"></span>
         <span id="room-status" class="room-status room-status-connecting" title="Connection status">Connecting…</span>
         <span class="room-hud-spacer"></span>
-        <label class="room-hud-level">
-            Level
-            @* Only render the levels the server can actually load (RoomState.LevelCount).
-               LevelNames is the master list of the 14 designed puzzles; re-porting a level
-               onto the engine is just a matter of bumping LevelCount, and this dropdown follows. *@
-            <select id="room-level-select">
-                @for (var i = 1; i <= RoomState.LevelCount && i <= LevelNames.Length; i++)
-                {
-                    <option value="@i">@i — @LevelNames[i - 1]</option>
-                }
-            </select>
-        </label>
-        <button id="room-reset-btn" type="button" class="room-hud-reset">Reset</button>
-        <form method="post" action="/api/auth/logout" class="room-hud-logout">
-            <AntiforgeryToken />
-            <button type="submit">Sign out</button>
-        </form>
+        <span class="room-hud-hint">ESC — menu</span>
+    </div>
+    @* Pause menu: shown whenever the pointer isn't captured (on load and after ESC). Holds the
+       controls that used to sit in the top bar, plus Resume which re-captures the cursor. *@
+    <div id="room-pause" class="room-pause" hidden>
+        <div class="room-pause-card">
+            <div class="room-pause-title">Paused</div>
+            <button id="room-pause-resume" type="button" class="room-pause-resume">Resume</button>
+            <label class="room-pause-level">
+                Level
+                @* Only render the levels the server can actually load (RoomState.LevelCount).
+                   LevelNames is the master list of the 14 designed puzzles. *@
+                <select id="room-level-select">
+                    @for (var i = 1; i <= RoomState.LevelCount && i <= LevelNames.Length; i++)
+                    {
+                        <option value="@i">@i — @LevelNames[i - 1]</option>
+                    }
+                </select>
+            </label>
+            <button id="room-reset-btn" type="button" class="room-pause-btn">Restart level</button>
+            <form method="post" action="/api/auth/logout" class="room-pause-logout">
+                <AntiforgeryToken />
+                <button type="submit" class="room-pause-btn">Sign out</button>
+            </form>
+        </div>
     </div>
     <div id="room-level-banner" class="room-level-banner" hidden>
         <div class="room-level-banner-title" id="room-level-banner-title"></div>

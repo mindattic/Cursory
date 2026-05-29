@@ -239,6 +239,70 @@ html, body {
 .room-context-item-disabled { color: rgba(255,255,255,0.4); cursor: default; }
 .room-context-item-disabled:hover { background: transparent; }
 
+.room-hud-hint { color: rgba(255,255,255,0.4); font-size: 12px; letter-spacing: 0.5px; }
+
+/* Level dropdown — dark mode (default OS styling renders white-on-light, unreadable here). */
+#room-level-select {
+    background: #1a1a1a;
+    color: rgba(255,255,255,0.92);
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 13px;
+}
+#room-level-select option { background: #1a1a1a; color: rgba(255,255,255,0.92); }
+
+/* Pause menu (shown when the pointer isn't captured). Cursor is visible here so it's clickable. */
+.room-pause {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 70;
+    cursor: auto;
+}
+.room-pause[hidden] { display: none; }
+.room-pause-card {
+    background: #1a1a1a;
+    border: 1px solid rgba(127,119,221,0.5);
+    border-radius: 14px;
+    padding: 28px 32px;
+    min-width: 300px;
+    box-shadow: 0 24px 70px rgba(0,0,0,0.7);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    align-items: stretch;
+    text-align: center;
+}
+.room-pause-title { font-size: 22px; font-weight: 600; letter-spacing: 0.5px; }
+.room-pause-level { font-size: 12px; color: rgba(255,255,255,0.6); display: flex; flex-direction: column; gap: 6px; }
+.room-pause-resume {
+    background: rgba(127,119,221,0.25);
+    border: 1px solid rgba(127,119,221,0.6);
+    color: #cfc9ff;
+    padding: 12px;
+    border-radius: 8px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.room-pause-resume:hover { background: rgba(127,119,221,0.38); }
+.room-pause-logout { margin: 0; }
+.room-pause-btn {
+    width: 100%;
+    background: transparent;
+    border: 1px solid rgba(255,255,255,0.18);
+    color: rgba(255,255,255,0.8);
+    padding: 9px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+}
+.room-pause-btn:hover { background: rgba(255,255,255,0.06); }
+
 .room-hud-logout { margin-left: 0; }
 .room-hud-logout button {
     background: transparent;

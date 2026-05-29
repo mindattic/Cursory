@@ -179,7 +179,7 @@ public class RoomState
         // separate, so you can still grab an edge; you don't collide with the shape you hold.
         (x, y) = SweepCursorAgainstWalls(c.X, c.Y, x, y);
         (x, y) = ResolveOutOfWalls(x, y);
-        (c.X, c.Y) = ResolveOutOfShapes(x, y, c.AttachedShapeId);
+        (c.X, c.Y) = ResolveOutOfShapes(x, y);
         c.LastInputTick = CurrentTick;
         return true;
     }
@@ -268,13 +268,13 @@ public class RoomState
 
     /// <summary>Push the cursor disc out of any shape piece it overlaps. Pieces are axis-aligned
     /// boxes in the shape's body frame, so we rotate the point into that frame, do the inflated
-    /// AABB ejection there, and rotate back. <paramref name="skipShapeId"/> is the shape this
-    /// cursor is grabbing — never eject off your own grabbed body, that would fight the drag.</summary>
-    private (double X, double Y) ResolveOutOfShapes(double x, double y, string? skipShapeId)
+    /// AABB ejection there, and rotate back. Applies even to the shape you're holding — with an
+    /// edge grab + leash the cursor rides just outside the surface, so collision reads correctly
+    /// without fighting the drag (you pull from outside; pushing inward is what gets ejected).</summary>
+    private (double X, double Y) ResolveOutOfShapes(double x, double y)
     {
         foreach (var s in shapes.Values)
         {
-            if (s.Id == skipShapeId) continue;
             var cosN = Math.Cos(-s.Angle);
             var sinN = Math.Sin(-s.Angle);
             var dx = x - s.X;
