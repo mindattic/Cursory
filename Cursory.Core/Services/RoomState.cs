@@ -83,10 +83,10 @@ public class RoomState
     /// toggle); read on the physics thread, so backed by a volatile field.</summary>
     private volatile bool segmentedTether = false;
     public bool SegmentedTether { get => segmentedTether; set => segmentedTether = value; }
-    /// <summary>Room-wide toggle for cursor-vs-wall/shape collision (default on). When on, the
+    /// <summary>Room-wide toggle for cursor-vs-wall/shape collision (default off). When on, the
     /// pointer is nudged out of solids (no swept blocking, so it can still cross — it just can't
     /// rest inside one); off = a free pointer that passes through. Volatile (read on the tick).</summary>
-    private volatile bool cursorCollision = true;
+    private volatile bool cursorCollision = false;
     public bool CursorCollision { get => cursorCollision; set => cursorCollision = value; }
 
     // ── state ─────────────────────────────────────────────────────────────────

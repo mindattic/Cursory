@@ -36,7 +36,7 @@ const state = {
     // — when it leaves we stop drawing our arrow (so it isn't left frozen), and recapture on re-entry.
     paused: false,
     pointerOver: true,
-    cursorCollision: true,   // room-wide toggles, synced from the snapshot
+    cursorCollision: false,   // room-wide toggles, synced from the snapshot
     segmentedTether: false,
     // Static geometry — populated once via the "Geometry" message on hub connect.
     geometry: { walls: [], labels: [] },

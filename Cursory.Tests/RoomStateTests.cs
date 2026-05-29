@@ -233,7 +233,7 @@ public class RoomStateTests
     [Test]
     public void Cursor_is_nudged_out_of_a_wall_when_collision_on()
     {
-        var room = new RoomState();   // CursorCollision defaults true
+        var room = new RoomState { CursorCollision = true };
         room.AddTestCursor("u1", 1500, 2000);
         room.AddWall(new Wall { Id = "w", X = 2000, Y = 2000, W = 400, H = 400 });
         room.SetCursorPosition("u1", 2000, 2000);   // dead centre of the wall
