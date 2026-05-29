@@ -71,6 +71,11 @@ public class RoomState
     /// point, so a fast 30 Hz frame can't land its centre exactly on a wall seam and slip through;
     /// solids are inflated by this when ejecting. Small enough not to feel "fat".</summary>
     private const double CursorRadius = 10;
+    /// <summary>When true, a tether catches on the corner of the body it's wrapping: as the cursor
+    /// swings around past a corner, the grab's contact point hops to that corner (the joint is
+    /// re-anchored there), so pulling tangentially spins the body — wrap it like a top. v1 tracks
+    /// a single contact corner; a full multi-segment rope is the next iteration.</summary>
+    public const bool IsSegmentedTether = true;
 
     // ── state ─────────────────────────────────────────────────────────────────
     private readonly ConcurrentDictionary<string, CursorState> cursors = new();
@@ -586,6 +591,116 @@ public class RoomState
         c.PullMass = PullMassFor(c);
     }
 
+    /// <summary>Segmented-tether wrap: when the rope (anchor → cursor) cuts through the body — the
+    /// cursor has swung behind it — re-anchor the grab joint onto the body corner nearest the
+    /// cursor. Pulling a corner tangentially makes the body spin: wrap it like a top. A plain
+    /// outward pull never cuts the body, so normal dragging is unaffected.</summary>
+    private void WrapTether(CursorState c, Body body, List<(double X, double Y)> corners,
+        List<(double Cx, double Cy, double Hw, double Hh)> rectsLocal, double bodyX, double bodyY, double angle)
+    {
+        if (!grabByUser.TryGetValue(c.UserId, out var joint)) return;
+
+        // Only wrap when the straight rope (anchor → cursor) actually cuts through the body — i.e.
+        // the cursor has swung behind it. A plain outward pull never cuts, so normal drags are
+        // untouched. (Anchor is already body-local; bring the cursor into the body frame too.)
+        var cosN = Math.Cos(-angle);
+        var sinN = Math.Sin(-angle);
+        var curLx = (c.X - bodyX) * cosN - (c.Y - bodyY) * sinN;
+        var curLy = (c.X - bodyX) * sinN + (c.Y - bodyY) * cosN;
+        var cuts = false;
+        foreach (var r in rectsLocal)
+            if (SegmentEntersRect(c.AnchorLocalX - r.Cx, c.AnchorLocalY - r.Cy, curLx - r.Cx, curLy - r.Cy, r.Hw, r.Hh))
+            { cuts = true; break; }
+        if (!cuts) return;
+
+        // Re-catch on the corner nearest the cursor.
+        var bd = double.MaxValue;
+        (double X, double Y) best = default;
+        foreach (var cor in corners)
+        {
+            var d = Math.Sqrt((c.X - cor.X) * (c.X - cor.X) + (c.Y - cor.Y) * (c.Y - cor.Y));
+            if (d < bd) { bd = d; best = cor; }
+        }
+        var dx = best.X - bodyX;
+        var dy = best.Y - bodyY;
+        var lx = dx * cosN - dy * sinN;
+        var ly = dx * sinN + dy * cosN;
+        if (Math.Abs(lx - c.AnchorLocalX) < 1 && Math.Abs(ly - c.AnchorLocalY) < 1) return;   // already on this corner
+
+        // Re-anchor the joint onto the corner the rope now catches.
+        world.Remove(joint);
+        var nj = new FixedMouseJoint(body, ToMVec(best.X, best.Y))
+        {
+            MaxForce = GrabMaxForce,
+            Frequency = GrabFrequency,
+            DampingRatio = GrabDamping,
+        };
+        nj.WorldAnchorB = ToMVec(c.X, c.Y);
+        world.Add(nj);
+        grabByUser[c.UserId] = nj;
+        c.AnchorLocalX = lx;
+        c.AnchorLocalY = ly;
+    }
+
+    /// <summary>Does the segment (ax,ay)→(bx,by) enter the axis-aligned rect [-hw,hw]×[-hh,hh]
+    /// somewhere along its length? Slab clip; true when the entry/exit interval is non-empty and
+    /// lies forward of the start. The start sits on the body surface, so this is true exactly when
+    /// the rope heads inward (the cursor is behind the body) and false on a plain outward pull.</summary>
+    private static bool SegmentEntersRect(double ax, double ay, double bx, double by, double hw, double hh)
+    {
+        double dx = bx - ax, dy = by - ay, tmin = 0, tmax = 1;
+        if (Math.Abs(dx) < 1e-9) { if (ax < -hw || ax > hw) return false; }
+        else
+        {
+            var t1 = (-hw - ax) / dx;
+            var t2 = (hw - ax) / dx;
+            if (t1 > t2) (t1, t2) = (t2, t1);
+            tmin = Math.Max(tmin, t1);
+            tmax = Math.Min(tmax, t2);
+            if (tmin > tmax) return false;
+        }
+        if (Math.Abs(dy) < 1e-9) { if (ay < -hh || ay > hh) return false; }
+        else
+        {
+            var t1 = (-hh - ay) / dy;
+            var t2 = (hh - ay) / dy;
+            if (t1 > t2) (t1, t2) = (t2, t1);
+            tmin = Math.Max(tmin, t1);
+            tmax = Math.Min(tmax, t2);
+            if (tmin > tmax) return false;
+        }
+        return tmax > 1e-3;
+    }
+
+    private static List<(double X, double Y)> BlockCornersWorld(BlockState b)
+    {
+        var cos = Math.Cos(b.Angle);
+        var sin = Math.Sin(b.Angle);
+        var hw = b.W / 2;
+        var hh = b.H / 2;
+        Span<(double x, double y)> local = [(-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh)];
+        var r = new List<(double, double)>(4);
+        foreach (var (lx, ly) in local) r.Add((b.X + lx * cos - ly * sin, b.Y + lx * sin + ly * cos));
+        return r;
+    }
+
+    private static List<(double X, double Y)> ShapeCornersWorld(ShapeActor s)
+    {
+        var cos = Math.Cos(s.Angle);
+        var sin = Math.Sin(s.Angle);
+        var r = new List<(double, double)>(s.Pieces.Count * 4);
+        foreach (var p in s.Pieces)
+        {
+            Span<(double x, double y)> local =
+            [
+                (p.LocalX - p.HalfW, p.LocalY - p.HalfH), (p.LocalX + p.HalfW, p.LocalY - p.HalfH),
+                (p.LocalX + p.HalfW, p.LocalY + p.HalfH), (p.LocalX - p.HalfW, p.LocalY + p.HalfH),
+            ];
+            foreach (var (lx, ly) in local) r.Add((s.X + lx * cos - ly * sin, s.Y + lx * sin + ly * cos));
+        }
+        return r;
+    }
+
     /// <summary>Release whatever this cursor is holding.</summary>
     public void Detach(string userId)
     {
@@ -1022,6 +1137,9 @@ public class RoomState
             {
                 if (c.AttachedBlockId is { } bid && blocks.TryGetValue(bid, out var ab))
                 {
+                    if (IsSegmentedTether && bodyByBlock.TryGetValue(bid, out var bbody))
+                        WrapTether(c, bbody, BlockCornersWorld(ab),
+                            [(0, 0, ab.W / 2, ab.H / 2)], ab.X, ab.Y, ab.Angle);
                     var cos = Math.Cos(ab.Angle);
                     var sin = Math.Sin(ab.Angle);
                     c.AnchorWorldX = ab.X + c.AnchorLocalX * cos - c.AnchorLocalY * sin;
@@ -1030,6 +1148,10 @@ public class RoomState
                 }
                 else if (c.AttachedShapeId is { } sid && shapes.TryGetValue(sid, out var ash))
                 {
+                    if (IsSegmentedTether && bodyByShape.TryGetValue(sid, out var sbody))
+                        WrapTether(c, sbody, ShapeCornersWorld(ash),
+                            ash.Pieces.Select(p => (p.LocalX, p.LocalY, p.HalfW, p.HalfH)).ToList(),
+                            ash.X, ash.Y, ash.Angle);
                     var cos = Math.Cos(ash.Angle);
                     var sin = Math.Sin(ash.Angle);
                     c.AnchorWorldX = ash.X + c.AnchorLocalX * cos - c.AnchorLocalY * sin;

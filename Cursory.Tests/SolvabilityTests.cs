@@ -41,16 +41,16 @@ public class SolvabilityTests
             ? new[] { (goals[0], "u1"), (goals[0], "u2") }
             : new[] { (goals[0], "u1"), (goals[1], "u2") };
 
-        // Grab. For a shared block, grab opposite edges so the pull stays balanced.
-        var grabbedEdge = false;
+        // Grab the goal-facing (leading) edge so a straight pull doesn't drag the rope back through
+        // the body (which the segmented tether would wrap, rotating it). A human can wrangle that;
+        // the harness just verifies the body is movable to the goal.
         foreach (var (goal, user) in assignments)
         {
             var b = FindBlock(room, goal.TargetBlockId)!;
-            var ex = goals.Count == 1 ? (user == "u1" ? b.X - b.W / 2 : b.X + b.W / 2) : b.X;
-            Assert.That(room.TryAttach(user, b.Id, ex, b.Y), Is.True, $"{user} failed to grab {b.Id}");
-            grabbedEdge = true;
+            var dir = Math.Sign(goal.X - b.X);
+            if (dir == 0) dir = 1;
+            Assert.That(room.TryAttach(user, b.Id, b.X + dir * b.W / 2, b.Y), Is.True, $"{user} failed to grab {b.Id}");
         }
-        Assert.That(grabbedEdge);
 
         var solved = DriveToGoals(room, level, assignments, maxTicks: 2500);
         Assert.That(solved, Is.True, $"level {level} did not solve within budget");

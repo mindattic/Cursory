@@ -242,6 +242,29 @@ public class RoomStateTests
         Assert.That(c.X, Is.LessThan(1970), $"cursor must stop at the wall, not tunnel through; X={c.X}");
     }
 
+    /// <summary>With the segmented tether on, orbiting the cursor around a light body wraps the
+    /// tether onto successive corners and spins the body — wrap it like a top.</summary>
+    [Test]
+    public void Segmented_tether_wrap_spins_the_body()
+    {
+        Assert.That(RoomState.IsSegmentedTether, Is.True);
+        var room = new RoomState();
+        room.AddTestCursor("u1", CX, CY);
+        var b = Block("b", mass: 1, friction: 0.2, size: 200);   // light + low friction
+        room.AddBlock(b);
+        room.TryAttach("u1", "b", CX + 100, CY);                 // grab the right edge
+
+        // Orbit the cursor around the body; the contact corner walks around, pulling tangentially.
+        for (var i = 0; i < 540; i++)
+        {
+            var a = i * Math.PI / 180.0;
+            room.GetCursor("u1")!.X = CX + Math.Cos(a) * 260;
+            room.GetCursor("u1")!.Y = CY + Math.Sin(a) * 260;
+            room.Step();
+        }
+        Assert.That(Math.Abs(b.Angle), Is.GreaterThan(0.3), $"wrapping should spin the body, angle={b.Angle}");
+    }
+
     /// <summary>NaN / infinite cursor input must not poison the simulation.</summary>
     [Test]
     public void NaN_input_is_dropped()
