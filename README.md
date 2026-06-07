@@ -10,7 +10,7 @@ your only voice is a *whistle* every time you click.
 
 | Project           | Role                                                                                |
 | ----------------- | ----------------------------------------------------------------------------------- |
-| `Cursory.Core`    | Domain models, `UserAccount`/`UserRepository` (JSON file store), `AuthService` (BCrypt + lockout + security-stamp), `RoomState` with sum-of-springs physics. |
+| `Cursory.Core`    | Domain models, `UserAccount`/`UserRepository` (JSON file store), `AuthService` (BCrypt + lockout + security-stamp), `RoomState` with Aether.Physics2D rigid-body simulation (gravity-free, top-down). |
 | `Cursory.Shared`  | Razor components rendered by the host — currently just the gated `Home` page (the room). |
 | `Cursory.Blazor`  | ASP.NET Core Blazor Server host. Cookie auth, antiforgery, rate-limited `/api/auth/login`, `RoomHub` (SignalR), `GameLoopService` (30 Hz physics tick + snapshot broadcast). |
 
@@ -29,13 +29,12 @@ interpolate — they never tell the server "the block is at (x, y)". At ~30
 bytes/cursor/tick this comfortably carries ~100 cursors per node before
 bandwidth becomes a concern.
 
-**Cooperative drag (the first puzzle).** Each cursor attached to a block stores
-a grab anchor in the block's local coordinate space. Per tick, the server sums
-`k * (cursor_world − anchor_world)` over every attached cursor. If the magnitude
-of the sum exceeds the block's static-friction threshold, the block accelerates
-along the net vector. Two cursors pulling opposite directions cancel; two
-pulling the same direction stack. A single cursor against a heavy block can't
-break friction — you need a partner.
+**Cooperative drag (the first puzzle).** Physics is handled by Aether.Physics2D
+(a gravity-free, top-down Box2D). Each grab is a `FixedMouseJoint` whose force is
+capped at a single-cursor ceiling; each block's `FrictionJoint` to a static ground
+gives it dry friction. A single cursor can't break a heavy block free — a second
+cursor's joint stacks the pull past the threshold. Offset grabs produce real torque,
+so two cursors at opposite corners rotate a body through a gap.
 
 **Whistle.** Click empty space → server records a `Whistle` and ships it on the
 next snapshot. Clients render a coloured ripple at the world point and play a
@@ -84,7 +83,7 @@ other Blazor entries (the workflow file lives in this repo at
 - [x] Cooperative-drag puzzle (one block, one goal zone)
 - [x] Pannable 10 000 × 10 000 world with minimap
 - [x] Whistle on click, per-colour tone
-- [x] Switch tiles, gated doors, wall collision, maze puzzle
+- [x] Cooperative geometry levels — gap-heaves, corridors, two-pad locks (switch tiles + gated doors retired; see CUR-A1)
 - [x] Compound rigid body with rotation — L-shape thread-the-needle level (Puzzle E)
 - [x] Dotted "pull line" anchor → cursor (length scales with force)
 - [x] Connection-status pill in the HUD; SignalR auto-reconnect
