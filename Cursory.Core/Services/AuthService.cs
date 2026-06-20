@@ -52,12 +52,12 @@ public class AuthService
 
         var user = users.GetByUsername(username);
 
-        // Constant-time BCrypt regardless of user existence or lockout state.
-        var hashToVerify = user?.PasswordHash ?? "$2a$12$invalidhashpaddingtomatchlength00000000000000000000";
-        var isValid = BCrypt.Net.BCrypt.Verify(password, hashToVerify);
-
         if (IsLockedOut(username))
             return null;
+
+        // Constant-time BCrypt regardless of user existence.
+        var hashToVerify = user?.PasswordHash ?? "$2a$12$invalidhashpaddingtomatchlength00000000000000000000";
+        var isValid = BCrypt.Net.BCrypt.Verify(password, hashToVerify);
 
         if (user == null || !isValid)
         {
@@ -88,15 +88,16 @@ public class AuthService
         ValidateRole(role);
 
         var existing = users.GetByUsername(username);
+        var sanitizedDisplay = SanitizeDisplayName(displayName);
         if (existing != null)
         {
             var dirty = false;
             // Case migration: normalise the canonical fields when the seed config changes,
             // only writing if something actually moved so we don't churn users.json on boot.
-            if (existing.Username != username || existing.DisplayName != displayName || existing.Color != color)
+            if (existing.Username != username || existing.DisplayName != sanitizedDisplay || existing.Color != color)
             {
                 existing.Username = username;
-                existing.DisplayName = displayName;
+                existing.DisplayName = sanitizedDisplay;
                 existing.Color = color;
                 dirty = true;
             }
@@ -116,7 +117,7 @@ public class AuthService
         var user = new UserAccount
         {
             Username = username,
-            DisplayName = displayName,
+            DisplayName = sanitizedDisplay,
             PasswordHash = BCrypt.Net.BCrypt.HashPassword(password, BcryptWorkFactor),
             Role = role,
             Color = color,
@@ -285,7 +286,7 @@ public class AuthService
 
     public static string SanitizeDisplayName(string name)
     {
-        if (string.IsNullOrWhiteSpace(name)) return name.Trim();
+        if (string.IsNullOrWhiteSpace(name)) return "";
         var sanitized = Regex.Replace(name, @"<[^>]*>", "", RegexOptions.Compiled);
         sanitized = sanitized.Replace("\0", "");
         sanitized = Regex.Replace(sanitized.Trim(), @"\s+", " ");

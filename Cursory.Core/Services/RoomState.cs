@@ -640,7 +640,6 @@ public class RoomState
             foreach (var r in rectsLocal)
                 if (SegmentRectEntry(flx - r.Cx, fly - r.Cy, tlx - r.Cx, tly - r.Cy, r.Hw + margin, r.Hh + margin, out var t))
                     best = Math.Min(best, t);
-            _ = best;
             return best < double.MaxValue;
         }
         double EntryT(double fromX, double fromY, double toX, double toY)
@@ -976,13 +975,14 @@ public class RoomState
     {
         var cutoff = CurrentTick - staleAfterTicks;
         var evicted = 0;
-        foreach (var c in cursors.Values)
+        var stale = cursors.Values
+            .Where(c => c.LastInputTick < cutoff)
+            .Select(c => c.UserId)
+            .ToList();
+        foreach (var id in stale)
         {
-            if (c.LastInputTick < cutoff)
-            {
-                RemovePlayer(c.UserId);
-                evicted++;
-            }
+            RemovePlayer(id);
+            evicted++;
         }
         return evicted;
     }
@@ -1369,6 +1369,10 @@ public class RoomState
             {
                 c.AttachedBlockId = null;
                 c.AttachedShapeId = null;
+                c.AttachedWallId  = null;
+                c.AttachedWireId  = null;
+                c.PullMass = 0;
+                c.TetherPivots.Clear();
             }
             SeedPuzzles();
         }

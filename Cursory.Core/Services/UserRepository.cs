@@ -127,7 +127,7 @@ public class UserRepository
         // A crash or power loss between WriteAllText and File.Move leaves users.json intact
         // (still pointing at the previous good copy); the worst-case outcome is a stray
         // .tmp left on disk. File.Move(overwrite:true) is atomic on Windows and POSIX.
-        var tempPath = filePath + ".tmp";
+        var tempPath = filePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
         File.WriteAllText(tempPath, json);
         File.Move(tempPath, filePath, overwrite: true);
     }
