@@ -21,3 +21,4 @@ node_modules/
 ## Logs / temp
 *.log
 *.tmp
+.claude/checkpoint.md
