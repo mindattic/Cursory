@@ -1,0 +1,455 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cursory 1.0.0</title>
+<meta name="description" content="Cooperative cursor puzzles in a shared room. Sign in, see every other player's cursor in
+real time on a 10 000 × 10 000 world, and solve physics puzzles together — drag heavy blocks
+into goal zones, thread compound sh...">
+<meta name="generator" content="MindAttic Codex build-readme.ps1">
+<meta name="generated" content="2026-08-14">
+<style>:root{
+  --bg:#0d1117;--bg2:#161b22;--bg3:#21262d;
+  --border:#30363d;
+  --text:#e6edf3;--muted:#8b949e;
+  --h1:#58a6ff;--h2:#79c0ff;--h3:#d2a8ff;
+  --link:#58a6ff;--code:#f0f6fc;
+  --sidebar-w:272px;--content-max:900px;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
+  background:var(--bg);color:var(--text);font-size:15px;line-height:1.8
+}
+#layout{display:flex;min-height:100vh}
+#sidebar{
+  width:var(--sidebar-w);flex-shrink:0;
+  position:sticky;top:0;height:100vh;overflow-y:auto;
+  background:var(--bg2);border-right:1px solid var(--border);
+  padding:1.5rem 0
+}
+#sidebar::-webkit-scrollbar{width:4px}
+#sidebar::-webkit-scrollbar-track{background:transparent}
+#sidebar::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+#toc-inner{padding:0 .75rem}
+.toc-title{
+  display:block;font-size:.68rem;font-weight:700;color:var(--muted);
+  text-transform:uppercase;letter-spacing:.1em;padding:.1rem .5rem .9rem
+}
+.toc-a{
+  display:block;padding:.22rem .5rem;font-size:.79rem;color:var(--muted);
+  border-radius:4px;text-decoration:none;line-height:1.35;margin-bottom:1px;
+  transition:color .15s,background .15s
+}
+.toc-a:hover{color:var(--text);background:rgba(255,255,255,.05)}
+.toc-a.active{color:var(--h1);background:rgba(88,166,255,.12);font-weight:500}
+.toc-a.is-h3{padding-left:1.25rem;font-size:.75rem}
+.toc-sep{border:none;border-top:1px solid var(--border);margin:.6rem .5rem}
+#content{
+  flex:1;min-width:0;
+  max-width:calc(var(--sidebar-w) + var(--content-max));
+  padding:2.5rem 3.5rem 5rem
+}
+h1{color:var(--h1);font-size:2rem;font-weight:700;
+   border-bottom:1px solid var(--border);padding-bottom:.5rem;margin-bottom:1.25rem}
+h2{color:var(--h2);font-size:1.35rem;font-weight:600;
+   margin-top:2.75rem;margin-bottom:.75rem;
+   border-bottom:1px solid var(--border);padding-bottom:.3rem}
+h3{color:var(--h3);font-size:1.05rem;font-weight:600;margin-top:1.5rem;margin-bottom:.4rem}
+h4{color:var(--text);font-size:.95rem;font-weight:600;margin-top:1rem}
+a{color:var(--link);text-decoration:none}
+a:hover{text-decoration:underline}
+p{margin:.7rem 0}
+ul,ol{padding-left:1.75rem;margin:.4rem 0}
+li{margin:.2rem 0}
+li>ul,li>ol{padding-left:1.5rem;margin:.1rem 0}
+hr{border:none;border-top:1px solid var(--border);margin:2.25rem 0}
+blockquote{
+  border-left:3px solid var(--h1);background:var(--bg2);
+  color:var(--muted);padding:.65rem 1rem;margin:1rem 0;
+  border-radius:0 4px 4px 0;font-style:italic
+}
+blockquote p{margin:0}
+code{
+  background:var(--bg2);color:var(--code);
+  padding:.15em .45em;border-radius:4px;font-size:.84em;
+  font-family:'Cascadia Code','Fira Code','Consolas','SF Mono',monospace
+}
+pre{
+  background:var(--bg2);border:1px solid var(--border);
+  border-radius:6px;padding:1rem 1.25rem;overflow-x:auto;
+  margin:1rem 0;position:relative
+}
+pre code{background:none;padding:0;font-size:.84rem;line-height:1.65;color:var(--code)}
+table{border-collapse:collapse;width:100%;margin:1rem 0;font-size:.875rem;overflow-x:auto;display:block}
+thead th{
+  background:var(--bg3);color:var(--h2);font-weight:600;
+  text-align:left;padding:.5rem .75rem;border:1px solid var(--border)
+}
+tbody td{padding:.4rem .75rem;border:1px solid var(--border);vertical-align:top}
+tbody tr:hover{background:rgba(255,255,255,.025)}
+.cpbtn{
+  position:absolute;top:.5rem;right:.5rem;
+  background:var(--bg3);color:var(--muted);
+  border:1px solid var(--border);border-radius:4px;
+  padding:.15rem .55rem;font-size:.71rem;font-family:inherit;
+  cursor:pointer;opacity:0;transition:opacity .15s,color .15s;line-height:1.5
+}
+pre:hover .cpbtn{opacity:1}
+.cpbtn:hover{color:var(--text)}
+.cpbtn.ok{color:#7ee787}
+.codex-footer{margin-top:3rem;padding-top:1rem;border-top:1px solid var(--border);color:var(--muted);font-size:.78rem}
+@media(max-width:820px){
+  #sidebar{display:none}
+  #content{padding:1.5rem 1.25rem 3.5rem}
+}</style>
+</head>
+<body>
+<div id="layout">
+  <nav id="sidebar" aria-label="Table of contents">
+    <div id="toc-inner"></div>
+  </nav>
+  <main id="content">
+<h1 id="cursory-100">Cursory 1.0.0</h1>
+<p><strong>Cooperative cursor puzzles in a shared room.</strong> Sign in, see every other player's cursor in real time on a 10 000 × 10 000 world, and solve physics puzzles together — drag heavy blocks into goal zones, thread compound shapes through gaps, wire up circuits. No chat; your only voice is a <em>whistle</em> when you click empty space.</p>
+<p>This README is the build/run/tour guide. For the canonical architecture doc, the Laws, and verified state, see <a href="docs/BIBLE.md"><code>docs/BIBLE.md</code></a> — this file describes <em>how to build and run it</em>, the bible describes <em>how to think about it</em>.</p>
+<h2 id="table-of-contents">Table of contents</h2>
+<ul>
+<li><a href="#what-it-is">What it is</a></li>
+<li><a href="#solution-layout">Solution layout</a></li>
+<li><a href="#architecture">Architecture</a></li>
+<li><a href="#how-multiplayer-works">How multiplayer works</a></li>
+<li><a href="#the-cooperative-draghtml-prototype">The cooperative-drag.html prototype</a></li>
+<li><a href="#cypress-end-to-end-coverage">Cypress end-to-end coverage</a></li>
+<li><a href="#seeded-accounts">Seeded accounts</a></li>
+<li><a href="#build-test-run">Build, test, run</a></li>
+<li><a href="#directory-layout">Directory layout</a></li>
+<li><a href="#deploy">Deploy</a></li>
+<li><a href="#canonical-documentation">Canonical documentation</a></li>
+<li><a href="#roadmap">Roadmap</a></li>
+</ul>
+<h2 id="what-it-is">What it is</h2>
+<p>Cursory is an ASP.NET Core Blazor Server web app. Every signed-in player's mouse cursor renders for every other connected player in real time, and a set of Portal-style puzzles are solved by those cursors physically cooperating: a heavy body needs two cursors pulling together, and <em>where</em> you grab a body decides how it turns. The server owns the whole simulation — a client never asserts where an object is, only where its own cursor is.</p>
+<p>It is <strong>not</strong> a chat app (there's no text channel — the whistle is the entire comms vocabulary), <strong>not</strong> client-authoritative, and <strong>not</strong> multi-room yet (one shared in-memory room). See <a href="docs/BIBLE.md"><code>docs/BIBLE.md#CUR-§3</code></a> ("what it is NOT") for the full list.</p>
+<h2 id="solution-layout">Solution layout</h2>
+<p><code>Cursory.slnx</code> (the <a href="https://github.com/dotnet/sdk">slnx</a> solution format) wires up four projects:</p>
+<table><thead><tr>
+<th>Project</th>
+<th>Kind</th>
+<th>Role</th>
+</tr></thead><tbody>
+<tr>
+<td><a href="Cursory.Core"><code>Cursory.Core</code></a></td>
+<td>class library</td>
+<td>Domain models and services. No ASP.NET dependency. <code>UserAccount</code>/<code>UserRepository</code> (JSON file store at <code>%APPDATA%\MindAttic\Cursory\users.json</code>), <code>AuthService</code> (BCrypt + lockout + security-stamp), <code>RoomState</code> — the authoritative simulation, backed by the <a href="https://github.com/nkast/Aether.Physics2D">Aether.Physics2D</a> rigid-body engine (gravity-free, top-down).</td>
+</tr>
+<tr>
+<td><a href="Cursory.Shared"><code>Cursory.Shared</code></a></td>
+<td>Razor class library</td>
+<td>Components shared with the host — currently just the gated <code>Home.razor</code> page (the room itself). References <code>Cursory.Core</code>.</td>
+</tr>
+<tr>
+<td><a href="Cursory.Blazor"><code>Cursory.Blazor</code></a></td>
+<td>ASP.NET Core Web SDK, entry point</td>
+<td>Blazor Server host. Cookie auth, antiforgery, rate-limited <code>/api/auth/login</code>, <code>RoomHub</code> (SignalR), <code>GameLoopService</code> (30 Hz physics tick + snapshot broadcast). References both <code>Cursory.Core</code> and <code>Cursory.Shared</code>.</td>
+</tr>
+<tr>
+<td><a href="Cursory.Tests"><code>Cursory.Tests</code></a></td>
+<td>NUnit 4</td>
+<td>Covers <code>AuthService</code>, <code>RoomState</code> physics/grabs/eviction, vote/level machinery, circuit evaluation, and level solvability. References <code>Cursory.Core</code> only.</td>
+</tr>
+</tbody></table>
+<p>Outside the solution, at the repo root:</p>
+<ul>
+<li><a href="cooperative-drag.html"><code>cooperative-drag.html</code></a> — a standalone, dependency-free HTML/JS demo of the <em>original</em> cooperative-drag concept (see below).</li>
+<li><a href="cypress"><code>cypress/</code></a> + <a href="cypress.config.js"><code>cypress.config.js</code></a> — browser end-to-end smoke tests against a running <code>Cursory.Blazor</code> instance.</li>
+<li><a href="docs"><code>docs/</code></a> — the Codex documentation layer (bible, amendments, user stories, rfcs).</li>
+<li><a href="tools/codex.ps1"><code>tools/codex.ps1</code></a> — the Codex digest/doctor tool.</li>
+</ul>
+<h2 id="architecture">Architecture</h2>
+<pre><code>                 browser (HTML5 canvas)
+                 wwwroot/js/room.js  ── clientToWorld, pan/zoom, render+interp
+                        │   ▲
+            Move/Grab/  │   │  Geometry (once) + Snapshot (30 Hz) + LevelLoaded
+            Release/    │   │
+            Whistle/    ▼   │
+            Vote   ┌─────────────────────────────────────────────┐
+                   │ Cursory.Blazor (ASP.NET Core Blazor Server)  │
+                   │  Program.cs  cookie auth · antiforgery ·      │
+                   │              rate-limited /api/auth/login ·   │
+                   │              forwarded headers · seed users   │
+                   │  Hubs/RoomHub.cs        write-only SignalR     │
+                   │  Services/GameLoopService.cs  30 Hz tick loop  │
+                   │  Cursory.Shared/…/Home.razor  gated room page  │
+                   └───────────────┬─────────────────────────────┘
+                                   │ owns
+                   ┌───────────────▼─────────────────────────────┐
+                   │ Cursory.Core                                 │
+                   │  RoomState  ── Aether.Physics2D World         │
+                   │     (gravity-free, top-down, worldLock)       │
+                   │  AuthService · UserRepository (JSON file)     │
+                   └───────────────────────────────────────────────┘</code></pre>
+<p>(Reproduced from <a href="docs/BIBLE.md"><code>docs/BIBLE.md#CUR-§4</code></a>; that's the canonical copy — if this one drifts, the bible wins.)</p>
+<h3 id="cursorycore">Cursory.Core</h3>
+<ul>
+<li><code>Models/GameState.cs</code> — the domain nouns: <code>CursorState</code>, <code>BlockState</code>, <code>ShapeActor</code> + <code>ShapePiece</code> (compound rigid bodies), <code>Wall</code>, <code>GoalZone</code>/<code>ShapeGoal</code>, <code>CircuitComponent</code>/   <code>Terminal</code>/<code>Wire</code> (the electronics level), <code>Whistle</code>, <code>RoomVote</code>/<code>VoteKind</code>, <code>WorldLabel</code>,   <code>WorldSnapshot</code>/<code>WorldGeometryMessage</code>, and legacy unwired types (<code>SwitchTile</code>, <code>Door</code>,   <code>ShapeAttachment</code>) kept only so old level data still deserializes.</li>
+<li><code>Models/UserAccount.cs</code> — username-based account: BCrypt <code>PasswordHash</code>, <code>SecurityStamp</code>, <code>Color</code>, <code>Role</code>.</li>
+<li><code>Services/RoomState.cs</code> — the authoritative simulation. One Aether.Physics2D <code>World</code> (gravity-free, top-down). <code>Step()</code> drives each grab joint, steps the engine, syncs poses   back, updates tethers/leashes, evaluates goals + the circuit, ages out whistles/votes.   <code>Snapshot()</code>/<code>GeometryMessage()</code> build defensive copies for broadcast. All engine access is   serialized under a <code>worldLock</code>. Seeds 14 levels (<code>SeedLevel1</code>..<code>SeedLevel14</code>).</li>
+<li><code>Services/AuthService.cs</code> — BCrypt hashing (work factor 12), per-account lockout (10 failures / 5 min), constant-time verify on missing users, security-stamp invalidation on   password/role change, policy-bypassing idempotent <code>SeedUser</code>, <code>SetAllPasswords</code>, strict   <code>CreateUser</code> policy, and the <code>IsLocalUrl</code> open-redirect filter.</li>
+<li><code>Services/UserRepository.cs</code> — thread-safe JSON-file store with atomic temp-file-then-<code>File.Move</code> writes, defensive copies on read.</li>
+<li><code>Services/CursoryServices.cs</code> — <code>AddCursoryCore</code> DI registration; resolves <code>Cursory:UsersPath</code> config or defaults to <code>%APPDATA%\MindAttic\Cursory\users.json</code>.</li>
+<li>Package references: <code>Aether.Physics2D</code>, <code>BCrypt.Net-Next</code>, plus the <code>Microsoft.Extensions.*.Abstractions</code> trio (DI, Configuration, Hosting) — no ASP.NET Core   dependency, so this project can be tested and reused headlessly.</li>
+</ul>
+<h3 id="cursoryshared">Cursory.Shared</h3>
+<ul>
+<li><code>Components/Pages/Home.razor</code> — the gated room page: opens the SignalR connection to <code>/hubs/room</code> and imports <code>wwwroot/js/room.js</code> (which physically lives in <code>Cursory.Blazor</code>,   the hosting project).</li>
+<li>Razor class library (<code>Microsoft.NET.Sdk.Razor</code>); references <code>Cursory.Core</code> and pulls in <code>Microsoft.AspNetCore.Components.Web</code>/<code>.Authorization</code>.</li>
+</ul>
+<h3 id="cursoryblazor">Cursory.Blazor</h3>
+<ul>
+<li><code>Program.cs</code> — composition root: <code>AddCursoryCore</code>, <code>GameLoopService</code> as a hosted <code>BackgroundService</code>, Razor Components + interactive server render mode, SignalR (receive   cap <code>8 KB</code>), cookie authentication (<code>Cursory.Auth</code> cookie, 30-day sliding expiration,   <code>SecurityStamp</code> re-validated via <code>OnValidatePrincipal</code> on every request), per-IP fixed-window   rate limiting on login (10/min), forwarded-headers handling for Azure's proxy, and the   one-shot seed of the two demo accounts on startup.</li>
+<li><code>Hubs/RoomHub.cs</code> — write-only SignalR hub mapped at <code>/hubs/room</code>: <code>Move</code>, <code>Grab</code>, <code>GrabShape</code>, <code>GrabWall</code>, <code>GrabWireEnd</code>, <code>Release</code>, <code>Whistle</code>, <code>StartResetVote</code>,   <code>StartLevelVote</code>, <code>CastVote</code>, <code>SetCursorCollision</code>, <code>SetSegmentedTether</code>. Methods never   return state — everything rides the broadcast snapshot.</li>
+<li><code>Services/GameLoopService.cs</code> — the 30 Hz <code>BackgroundService</code>: steps <code>RoomState</code>, evicts stale cursors every 30 ticks, rebroadcasts geometry / announces a level on change, broadcasts   the snapshot, idles when nobody is connected, logs slow ticks.</li>
+<li><code>Components/</code> — <code>App.razor</code>, <code>Layout/MainLayout.razor</code>, <code>Pages/Login.razor</code>, <code>Pages/Error.razor</code>, <code>RedirectToLogin.razor</code>, <code>Routes.razor</code>.</li>
+<li><code>wwwroot/js/room.js</code> — the client: canvas rendering, <code>clientToWorld</code> coordinate transform, pan/zoom, interpolation, minimap, whistle audio/visuals, HUD (level select, reset vote,   connection-status pill).</li>
+<li>Two auth endpoints: <code>POST /api/auth/login</code> (antiforgery + rate limit + open-redirect guard, issues the cookie) and <code>POST /api/auth/logout</code>.</li>
+<li><code>ASP.NET Core Web SDK</code> project; the only project with <code>Microsoft.NET.Sdk.Web</code> and the only entry point (<code>dotnet run --project Cursory.Blazor</code>).</li>
+</ul>
+<h3 id="cursorytests">Cursory.Tests</h3>
+<p>NUnit 4 project referencing <code>Cursory.Core</code> only (via <code>InternalsVisibleTo</code>), so it exercises the simulation and auth headlessly with no ASP.NET Core host required:</p>
+<table><thead><tr>
+<th>File</th>
+<th>Covers</th>
+</tr></thead><tbody>
+<tr>
+<td><code>AuthServiceTests.cs</code></td>
+<td>Seed idempotency, <code>SetAllPasswords</code>, lockout, weak-password rejection, <code>IsLocalUrl</code> open-redirect filter.</td>
+</tr>
+<tr>
+<td><code>UserRepositoryTests.cs</code></td>
+<td>Empty-path rejection at construction.</td>
+</tr>
+<tr>
+<td><code>RoomStateTests.cs</code></td>
+<td>Edge-snap grab, clamp-to-body, pull-in-mass-units, single cursor moves a light block but not a heavy one, two cursors break friction, opposing pulls cancel, offset pulls rotate, detach removes force, shape edge-grab + drag, leash length, cursor-vs-wall nudge, segmented-tether wrap/corner-catch, NaN drop, stale-cursor eviction, geometry on its own channel, <code>LevelCount == 14</code>, every level seeds-and-steps.</td>
+</tr>
+<tr>
+<td><code>SolvabilityTests.cs</code></td>
+<td>Every block level is auto-solvable by two virtual cursors; rotation/thread shape levels are provably movable.</td>
+</tr>
+<tr>
+<td><code>VoteAndLevelTests.cs</code></td>
+<td>Solo quorum resolves at once, two-voter needs both, early-reject when quorum unreachable, level switch moves state + queues rebroadcast, no-op/out-of-range rejected.</td>
+</tr>
+<tr>
+<td><code>CircuitTests.cs</code></td>
+<td>Bulb lights on a complete series loop; dark on a gap; dark when the resistor is bypassed.</td>
+</tr>
+</tbody></table>
+<h2 id="how-multiplayer-works">How multiplayer works</h2>
+<p>The server owns the simulation. Clients send only cursor position (and grab/release/whistle events) at 30 Hz over SignalR. <code>GameLoopService</code> runs a fixed-rate physics tick on <code>RoomState</code> and broadcasts an authoritative <code>WorldSnapshot</code> to every connected client. Clients render and interpolate — they never tell the server where a body is.</p>
+<p>Static world geometry (walls, labels) is delivered once on connect via <code>WorldGeometryMessage</code>, not on every tick — see <code>CUR-LAW-6</code> in the bible.</p>
+<p><strong>Cooperative drag.</strong> Physics runs in Aether.Physics2D (Box2D, gravity-free, top-down). Each grab is a <code>FixedMouseJoint</code> force-capped at a single-cursor ceiling; each block's <code>FrictionJoint</code> to a static ground gives it dry friction. A single cursor can't break a heavy block free — two cursors stack their pull past the friction threshold. Offset grabs produce real torque, so cooperating cursors can rotate a body through a gap.</p>
+<p><strong>Compound shapes.</strong> <code>ShapeActor</code> bodies are built from multiple <code>ShapePiece</code> rectangles in body-local space (e.g. an L-shape). Grabs on shapes drive full rigid-body torque via the Aether solver.</p>
+<p><strong>Circuit levels.</strong> <code>CircuitComponent</code> (battery, resistor, bulb), <code>Terminal</code>, and <code>Wire</code> records model breadboard-style wiring. A cursor grabs a wire end and drags it onto a terminal; the evaluator lights the bulb when a closed series loop is formed.</p>
+<p><strong>Whistle.</strong> Click empty space → server records a <code>Whistle</code> and ships it on the next snapshot. Clients render a coloured ripple and play a Web Audio tone keyed by each player's colour.</p>
+<p><strong>Pan &amp; minimap.</strong> The viewport is a single HTML5 canvas. Drag empty space to pan over the 10 000 × 10 000 world; a minimap in the corner shows all cursors and the viewport rect.</p>
+<p><strong>Voting.</strong> Any player can propose a level reset or level switch; the action fires when YES votes reach a 2/3 majority of the connected roster. Vote times out after 15 s (450 ticks at 30 Hz).</p>
+<h2 id="the-cooperative-draghtml-prototype">The cooperative-drag.html prototype</h2>
+<p><a href="cooperative-drag.html"><code>cooperative-drag.html</code></a> is a standalone, dependency-free HTML page (inline CSS + vanilla JS, one <code>&lt;canvas&gt;</code>, no build step — open it directly in a browser) that demonstrates the <em>original</em> cooperative-drag mechanic Cursory was built around, before the engine port:</p>
+<ul>
+<li>A single draggable block with a hand-rolled <strong>sum-of-springs</strong> kinematic model: each attached cursor contributes a spring force toward its anchor point (<code>SPRING_K</code>), the forces   sum, and the block only starts moving once the summed force magnitude exceeds a tunable   <strong>friction threshold</strong> (a slider in the UI).</li>
+<li>Click the block to attach a cursor at that point; release and click again to attach another cursor while the first stays put. Re-grab an existing cursor by clicking near its head.   A live HUD prints the net force magnitude and whether the block is "Moving" or "Below   threshold" (block renders green vs. gray to match).</li>
+</ul>
+<p>This is the same mechanic Cursory launched with, and it's a good five-minute way to feel <em>why</em> two cursors are needed to move a heavy block without spinning up the full app. It is <strong>not</strong> wired to the current game — the shipped app replaced this hand-rolled spring model with real Aether.Physics2D rigid bodies, <code>FrictionJoint</code>s, and <code>FixedMouseJoint</code> grabs (see <a href="docs/AMENDMENTS.md#CUR-A1"><code>CUR-A1</code></a>). The file is not part of the <code>.slnx</code> solution and isn't built, tested, or served by <code>Cursory.Blazor</code>; it's a standalone reference kept at the repo root.</p>
+<h2 id="cypress-end-to-end-coverage">Cypress end-to-end coverage</h2>
+<p><a href="cypress"><code>cypress/</code></a> drives a <em>running</em> <code>Cursory.Blazor</code> instance in a real browser — this is the only automated coverage of the SignalR/UI path end to end (see <code>docs/BIBLE.md</code> §6, marked 🟡 since it isn't wired into <code>dotnet test</code>).</p>
+<table><thead><tr>
+<th>Spec</th>
+<th>Covers</th>
+</tr></thead><tbody>
+<tr>
+<td><a href="cypress/e2e/login.cy.js"><code>cypress/e2e/login.cy.js</code></a></td>
+<td>Seeded user (<code>gungreeneyes</code>) signs in and lands on the room, with <code>#room-canvas</code> visible and the HUD showing the username. Wrong password is rejected back to <code>/login?error=invalid</code>. Unauthenticated <code>/</code> redirects to <code>/login</code>.</td>
+</tr>
+<tr>
+<td><a href="cypress/e2e/level-select.cy.js"><code>cypress/e2e/level-select.cy.js</code></a></td>
+<td>The level <code>&lt;select&gt;</code> exposes all 14 levels; the Reset button and connection-status pill (<code>Live</code>) render; selecting a different level triggers an immediate switch under solo quorum (<code>ceil(2/3 × 1) = 1</code>).</td>
+</tr>
+</tbody></table>
+<p>Configuration (<a href="cypress.config.js"><code>cypress.config.js</code></a>): <code>baseUrl</code> defaults to <code>http://localhost:5238</code> (override with <code>CYPRESS_BASE_URL</code>), 1600×900 viewport, <code>chromeWebSecurity</code> disabled, generous timeouts (15 s command, 60 s page load) to tolerate the SignalR handshake.</p>
+<pre><code class="language-powershell">npm install            # installs Cypress (see package.json)
+dotnet run --project Cursory.Blazor   # in one terminal — app must already be running
+npm test               # headless: cypress run
+npm run test:open      # interactive runner: cypress open</code></pre>
+<h2 id="seeded-accounts">Seeded accounts</h2>
+<p>Seeded idempotently on first run. The seed bypasses the strict password policy; <code>SetAllPasswords</code> keeps every account on the current operator-chosen password:</p>
+<table><thead><tr>
+<th>Username</th>
+<th>Password</th>
+<th>Colour</th>
+</tr></thead><tbody>
+<tr>
+<td><code>gungreeneyes</code></td>
+<td><code>800085</code></td>
+<td><code>#D85A30</code></td>
+</tr>
+<tr>
+<td><code>gideonkain</code></td>
+<td><code>800085</code></td>
+<td><code>#378ADD</code></td>
+</tr>
+</tbody></table>
+<p>New accounts created via the API enforce the strict policy (≥ 8 chars, upper + lower + digit + special). There is no self-service signup flow — accounts are operator-seeded only.</p>
+<h2 id="build-test-run">Build, test, run</h2>
+<pre><code class="language-powershell">dotnet build Cursory.slnx
+dotnet test  Cursory.slnx
+dotnet run --project Cursory.Blazor
+# https://localhost:7238  (or http://localhost:5238)</code></pre>
+<p>To see cooperative play locally, open a second browser window (or incognito) and sign in as the other seeded user — both cursors appear in the same room.</p>
+<p><code>TreatWarningsAsErrors=true</code> is set in <a href="Directory.Build.props"><code>Directory.Build.props</code></a>; missing XML doc comments are downgraded to warnings (<code>CS1591</code>) — that's the only warning class allowed to survive a build. <code>Nullable</code>/<code>ImplicitUsings</code> are enabled solution-wide; <a href="global.json"><code>global.json</code></a> pins the SDK to <code>rollForward: latestMajor</code>.</p>
+<h2 id="directory-layout">Directory layout</h2>
+<pre><code>Cursory/
+├─ Cursory.slnx                  solution file (Core, Shared, Blazor, Tests)
+├─ Directory.Build.props         shared MSBuild settings (nullable, warnings-as-errors, ...)
+├─ global.json                   .NET SDK pin
+├─ NuGet.config
+├─ cooperative-drag.html         standalone sum-of-springs prototype (see above)
+├─ cypress.config.js             Cypress e2e config
+├─ package.json                  Cypress-only npm harness ("cursory-e2e")
+├─ Cursory.Core/                 domain models + services (no ASP.NET dependency)
+│  ├─ Models/                    GameState.cs, UserAccount.cs
+│  └─ Services/                  RoomState.cs, AuthService.cs, UserRepository.cs, CursoryServices.cs
+├─ Cursory.Shared/                Razor component library
+│  └─ Components/Pages/Home.razor
+├─ Cursory.Blazor/                ASP.NET Core Blazor Server host (entry point)
+│  ├─ Program.cs
+│  ├─ Hubs/RoomHub.cs
+│  ├─ Services/GameLoopService.cs
+│  ├─ Components/                App.razor, Layout/, Pages/Login.razor, Pages/Error.razor, ...
+│  └─ wwwroot/js/room.js          client renderer
+├─ Cursory.Tests/                 NUnit 4 suite (AuthServiceTests, RoomStateTests, ...)
+├─ cypress/
+│  ├─ e2e/                        login.cy.js, level-select.cy.js
+│  └─ support/e2e.js
+├─ docs/                          Codex documentation layer (see below)
+│  ├─ BIBLE.md, AMENDMENTS.md, USER_STORIES.md, BIBLE.digest.md (generated)
+│  └─ rfc/
+├─ tools/
+│  ├─ codex.ps1                   Codex digest/doctor tool
+│  └─ build-readme.ps1            thin wrapper → shared README→HTML engine
+└─ .github/workflows/azure-deploy.yml</code></pre>
+<h2 id="deploy">Deploy</h2>
+<p>Targeted at Azure App Service (<code>cursory</code>). The workflow at <a href=".github/workflows/azure-deploy.yml"><code>.github/workflows/azure-deploy.yml</code></a> fires on push to <code>main</code>: restore → publish <code>Cursory.Blazor</code> → upload artifact → deploy to the <code>cursory</code> slot at <strong>https://cursory.azurewebsites.net</strong>.</p>
+<p>To turn the deploy on (one-time setup):</p>
+<ol>
+<li>Provision an Azure App Service named <code>cursory</code> (.NET 10 runtime, Linux or Windows).</li>
+<li>Download the publish profile from the App Service in the Azure portal.</li>
+<li>Add the GitHub secret <code>AZURE_WEBAPP_PUBLISH_PROFILE</code> to <code>mindattic/Cursory</code>.</li>
+<li>Push to <code>main</code>.</li>
+<li>Flip <code>MindAttic.Deploy/projects.json → apps[].cursory.disabled</code> to <code>false</code>.</li>
+</ol>
+<h2 id="canonical-documentation">Canonical documentation</h2>
+<p>This repo has adopted the MindAttic "Codex" documentation standard — canon lives in <code>docs/</code>, layered, each fact owned by exactly one layer:</p>
+<ul>
+<li><strong><a href="docs/BIBLE.md"><code>docs/BIBLE.md</code></a></strong> (L0) — what Cursory IS / is NOT, architecture canon, the Laws (<code>CUR-LAW-1</code>..<code>CUR-LAW-9</code>), verified state, active frontier, quality bar, glossary.</li>
+<li><strong><a href="docs/AMENDMENTS.md"><code>docs/AMENDMENTS.md</code></a></strong> (L1) — append-only change log; an amendment wins over the bible. Currently one entry, <code>CUR-A1</code>: Aether.Physics2D rigid bodies replaced the   original sum-of-springs model (see <a href="#the-cooperative-draghtml-prototype">above</a>); switches and   gated doors were retired in the process.</li>
+<li><strong><a href="docs/USER_STORIES.md"><code>docs/USER_STORIES.md</code></a></strong> (L2) — <code>CUR-US-&lt;Epic&gt;&lt;n&gt;</code> stories; every ✅ cites its verifying NUnit test.</li>
+<li><strong><a href="docs/rfc"><code>docs/rfc/</code></a></strong> — design notes that graduate into the bible + stories.</li>
+<li><strong><a href="docs/BIBLE.digest.md"><code>docs/BIBLE.digest.md</code></a></strong> — generated by <code>tools/codex.ps1 digest</code>; never hand-edited; injected as session-start context by a Claude Code hook.</li>
+</ul>
+<h2 id="roadmap">Roadmap</h2>
+<ul>
+<li>[x] Cooperative-drag puzzle — heavy block + goal zone</li>
+<li>[x] Pannable 10 000 × 10 000 world with minimap</li>
+<li>[x] Whistle on click, per-colour Web Audio tone</li>
+<li>[x] 14 engine-backed levels (gap-heaves, corridors, two-pad locks)</li>
+<li>[x] Compound rigid body (L-shape) with rotation — thread-the-needle level</li>
+<li>[x] Dotted pull-line tether with segmented wrap</li>
+<li>[x] Connection-status pill + SignalR auto-reconnect</li>
+<li>[x] Stale-cursor eviction</li>
+<li>[x] Static geometry delivered once on connect (not at 30 Hz)</li>
+<li>[x] Room voting — reset or level switch (2/3 quorum, 15 s timeout)</li>
+<li>[x] Circuit levels — wires, terminals, battery/resistor/bulb</li>
+<li>[x] Azure App Service workflow + <code>MindAttic.Deploy</code> entry (idle until App Service exists)</li>
+<li>[ ] Multiple rooms / lobby</li>
+<li>[ ] Per-room state persistence (currently in-memory)</li>
+<li>[ ] Mobile (touch) input</li>
+</ul>
+
+    <p class="codex-footer">Generated 2026-08-14 by the shared MindAttic Codex engine (<code>codex-standard/build-readme.ps1</code>) from <code>README.md</code>. Edit the Markdown source, not this file.</p>
+  </main>
+</div>
+<script>(function(){
+  'use strict';
+  var inner   = document.getElementById('toc-inner');
+  var content = document.getElementById('content');
+  if(!inner||!content) return;
+
+  var headings = Array.from(content.querySelectorAll('h2,h3'));
+  if(headings.length){
+    var title = document.createElement('span');
+    title.className = 'toc-title';
+    title.textContent = 'Contents';
+    inner.appendChild(title);
+
+    headings.forEach(function(h){
+      var a = document.createElement('a');
+      a.href      = '#'+h.id;
+      a.textContent = h.textContent.replace(/[#¶]/g,'').trim();
+      a.className = 'toc-a'+(h.tagName==='H3'?' is-h3':'');
+      if(h.tagName==='H2' && inner.children.length>1){
+        var sep=document.createElement('hr');
+        sep.className='toc-sep';
+        inner.appendChild(sep);
+      }
+      inner.appendChild(a);
+    });
+  }
+
+  var tocLinks = inner.querySelectorAll('.toc-a');
+  if(tocLinks.length && 'IntersectionObserver' in window){
+    var idMap={};
+    tocLinks.forEach(function(l){idMap[decodeURIComponent(l.getAttribute('href').slice(1))]=l;});
+    var active=null;
+    var obs=new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if(e.isIntersecting){
+          if(active)active.classList.remove('active');
+          active=idMap[e.target.id]||null;
+          if(active){
+            active.classList.add('active');
+            var sidebar=document.getElementById('sidebar');
+            if(sidebar){
+              var ar=active.getBoundingClientRect();
+              var sr=sidebar.getBoundingClientRect();
+              if(ar.top<sr.top||ar.bottom>sr.bottom)
+                active.scrollIntoView({block:'nearest'});
+            }
+          }
+        }
+      });
+    },{rootMargin:'-8% 0px -78% 0px',threshold:0});
+    headings.forEach(function(h){obs.observe(h);});
+  }
+
+  content.querySelectorAll('pre').forEach(function(pre){
+    var btn=document.createElement('button');
+    btn.className='cpbtn';
+    btn.textContent='copy';
+    btn.setAttribute('aria-label','Copy code');
+    btn.addEventListener('click',function(){
+      var text=(pre.querySelector('code')||pre).textContent;
+      if(!navigator.clipboard){return;}
+      navigator.clipboard.writeText(text).then(function(){
+        btn.textContent='copied!';btn.classList.add('ok');
+        setTimeout(function(){btn.textContent='copy';btn.classList.remove('ok');},1800);
+      }).catch(function(){});
+    });
+    pre.appendChild(btn);
+  });
+}());</script>
+</body>
+</html>
