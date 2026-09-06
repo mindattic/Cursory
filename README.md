@@ -16,7 +16,6 @@ run it*, the bible describes *how to think about it*.
 - [Architecture](#architecture)
 - [How multiplayer works](#how-multiplayer-works)
 - [The cooperative-drag.html prototype](#the-cooperative-draghtml-prototype)
-- [Cypress end-to-end coverage](#cypress-end-to-end-coverage)
 - [Seeded accounts](#seeded-accounts)
 - [Build, test, run](#build-test-run)
 - [Directory layout](#directory-layout)
@@ -44,7 +43,7 @@ projects:
 | Project | Kind | Role |
 | --- | --- | --- |
 | [`Cursory.Core`](Cursory.Core) | class library | Domain models and services. No ASP.NET dependency. `UserAccount`/`UserRepository` (JSON file store at `%APPDATA%\MindAttic\Cursory\users.json`), `AuthService` (BCrypt + lockout + security-stamp), `RoomState` — the authoritative simulation, backed by the [Aether.Physics2D](https://github.com/nkast/Aether.Physics2D) rigid-body engine (gravity-free, top-down). |
-| [`Cursory.Shared`](Cursory.Shared) | Razor class library | Components shared with the host — currently just the gated `Home.razor` page (the room itself). References `Cursory.Core`. |
+| [`Cursory.Shared`](Cursory.Shared) | Razor class library | Components shared with the host: `EnginePicker.razor` (`"/"`, links to the three renderer routes) and `Home.razor` (`"/room/{Engine}"`, the gated room page). References `Cursory.Core`. |
 | [`Cursory.Blazor`](Cursory.Blazor) | ASP.NET Core Web SDK, entry point | Blazor Server host. Cookie auth, antiforgery, rate-limited `/api/auth/login`, `RoomHub` (SignalR), `GameLoopService` (30 Hz physics tick + snapshot broadcast). References both `Cursory.Core` and `Cursory.Shared`. |
 | [`Cursory.Tests`](Cursory.Tests) | NUnit 4 | Covers `AuthService`, `RoomState` physics/grabs/eviction, vote/level machinery, circuit evaluation, and level solvability. References `Cursory.Core` only. |
 
@@ -52,16 +51,18 @@ Outside the solution, at the repo root:
 
 - [`cooperative-drag.html`](cooperative-drag.html) — a standalone, dependency-free HTML/JS demo
   of the *original* cooperative-drag concept (see below).
-- [`cypress/`](cypress) + [`cypress.config.js`](cypress.config.js) — browser end-to-end smoke
-  tests against a running `Cursory.Blazor` instance.
 - [`docs/`](docs) — the Codex documentation layer (bible, amendments, user stories, rfcs).
 - [`tools/codex.ps1`](tools/codex.ps1) — the Codex digest/doctor tool.
 
 ## Architecture
 
 ```
-                 browser (HTML5 canvas)
-                 wwwroot/js/room.js  ── clientToWorld, pan/zoom, render+interp
+        browser — three parallel renderers, one shared backend (CUR-A2)
+        wwwroot/shared/room-core.js — networking, input, camera, picking, HUD, audio,
+                                       + the overlay (cursors/tethers/whistles/labels/minimap)
+        wwwroot/{canvas2d,three,babylon}/room.js + renderer.js — world adapter only
+        (canvas2d: 2D calls on #room-canvas · three/babylon: WebGL meshes on #room-canvas,
+         orthographic top-down camera, overlay drawn on a transparent #room-overlay on top)
                         │   ▲
             Move/Grab/  │   │  Geometry (once) + Snapshot (30 Hz) + LevelLoaded
             Release/    │   │
@@ -73,7 +74,8 @@ Outside the solution, at the repo root:
                    │              forwarded headers · seed users   │
                    │  Hubs/RoomHub.cs        write-only SignalR     │
                    │  Services/GameLoopService.cs  30 Hz tick loop  │
-                   │  Cursory.Shared/…/Home.razor  gated room page  │
+                   │  Cursory.Shared/…/EnginePicker.razor  "/"      │
+                   │  Cursory.Shared/…/Home.razor  "/room/{Engine}" │
                    └───────────────┬─────────────────────────────┘
                                    │ owns
                    ┌───────────────▼─────────────────────────────┐
@@ -85,7 +87,7 @@ Outside the solution, at the repo root:
 ```
 
 (Reproduced from [`docs/BIBLE.md#CUR-§4`](docs/BIBLE.md); that's the canonical copy — if this
-one drifts, the bible wins.)
+one drifts, the bible wins. See [`CUR-A2`](docs/AMENDMENTS.md#CUR-A2) for the renderer split.)
 
 ### Cursory.Core
 
@@ -115,9 +117,11 @@ one drifts, the bible wins.)
 
 ### Cursory.Shared
 
-- `Components/Pages/Home.razor` — the gated room page: opens the SignalR connection to
-  `/hubs/room` and imports `wwwroot/js/room.js` (which physically lives in `Cursory.Blazor`,
-  the hosting project).
+- `Components/Pages/EnginePicker.razor` — `"/"`, the post-login landing page: links to
+  `/room/canvas2d`, `/room/three`, `/room/babylon`.
+- `Components/Pages/Home.razor` — `"/room/{Engine}"`, the gated room page: opens the SignalR
+  connection to `/hubs/room` and imports `wwwroot/{Engine}/room.js` (which physically lives in
+  `Cursory.Blazor`, the hosting project).
 - Razor class library (`Microsoft.NET.Sdk.Razor`); references `Cursory.Core` and pulls in
   `Microsoft.AspNetCore.Components.Web`/`.Authorization`.
 
@@ -138,9 +142,13 @@ one drifts, the bible wins.)
   the snapshot, idles when nobody is connected, logs slow ticks.
 - `Components/` — `App.razor`, `Layout/MainLayout.razor`, `Pages/Login.razor`,
   `Pages/Error.razor`, `RedirectToLogin.razor`, `Routes.razor`.
-- `wwwroot/js/room.js` — the client: canvas rendering, `clientToWorld` coordinate transform,
-  pan/zoom, interpolation, minimap, whistle audio/visuals, HUD (level select, reset vote,
-  connection-status pill).
+- `wwwroot/shared/room-core.js` — the renderer-agnostic client core shared by all three engines:
+  the SignalR connection, `clientToWorld` coordinate transform, pan/zoom, grab picking, whistle
+  audio, HUD (level select, reset vote, connection-status pill), and the vector/text overlay
+  (cursors, tethers, whistle ripples, labels, mass numbers, minimap).
+- `wwwroot/canvas2d/`, `wwwroot/three/`, `wwwroot/babylon/` — one `room.js` entry point +
+  `renderer.js` "world adapter" per engine, drawing only the solid game world (grid, walls,
+  blocks, shapes, goals, switches, doors, circuit). See [`CUR-A2`](docs/AMENDMENTS.md#CUR-A2).
 - Two auth endpoints: `POST /api/auth/login` (antiforgery + rate limit + open-redirect guard,
   issues the cookie) and `POST /api/auth/logout`.
 - `ASP.NET Core Web SDK` project; the only project with `Microsoft.NET.Sdk.Web` and the only
@@ -217,28 +225,6 @@ Aether.Physics2D rigid bodies, `FrictionJoint`s, and `FixedMouseJoint` grabs (se
 [`CUR-A1`](docs/AMENDMENTS.md#CUR-A1)). The file is not part of the `.slnx` solution and isn't
 built, tested, or served by `Cursory.Blazor`; it's a standalone reference kept at the repo root.
 
-## Cypress end-to-end coverage
-
-[`cypress/`](cypress) drives a *running* `Cursory.Blazor` instance in a real browser —
-this is the only automated coverage of the SignalR/UI path end to end (see `docs/BIBLE.md`
-§6, marked 🟡 since it isn't wired into `dotnet test`).
-
-| Spec | Covers |
-| --- | --- |
-| [`cypress/e2e/login.cy.js`](cypress/e2e/login.cy.js) | Seeded user (`gungreeneyes`) signs in and lands on the room, with `#room-canvas` visible and the HUD showing the username. Wrong password is rejected back to `/login?error=invalid`. Unauthenticated `/` redirects to `/login`. |
-| [`cypress/e2e/level-select.cy.js`](cypress/e2e/level-select.cy.js) | The level `<select>` exposes all 14 levels; the Reset button and connection-status pill (`Live`) render; selecting a different level triggers an immediate switch under solo quorum (`ceil(2/3 × 1) = 1`). |
-
-Configuration ([`cypress.config.js`](cypress.config.js)): `baseUrl` defaults to
-`http://localhost:5238` (override with `CYPRESS_BASE_URL`), 1600×900 viewport, `chromeWebSecurity`
-disabled, generous timeouts (15 s command, 60 s page load) to tolerate the SignalR handshake.
-
-```powershell
-npm install            # installs Cypress (see package.json)
-dotnet run --project Cursory.Blazor   # in one terminal — app must already be running
-npm test               # headless: cypress run
-npm run test:open      # interactive runner: cypress open
-```
-
 ## Seeded accounts
 
 Seeded idempotently on first run. The seed bypasses the strict password policy;
@@ -278,23 +264,22 @@ Cursory/
 ├─ global.json                   .NET SDK pin
 ├─ NuGet.config
 ├─ cooperative-drag.html         standalone sum-of-springs prototype (see above)
-├─ cypress.config.js             Cypress e2e config
-├─ package.json                  Cypress-only npm harness ("cursory-e2e")
 ├─ Cursory.Core/                 domain models + services (no ASP.NET dependency)
 │  ├─ Models/                    GameState.cs, UserAccount.cs
 │  └─ Services/                  RoomState.cs, AuthService.cs, UserRepository.cs, CursoryServices.cs
 ├─ Cursory.Shared/                Razor component library
-│  └─ Components/Pages/Home.razor
+│  └─ Components/Pages/           EnginePicker.razor ("/"), Home.razor ("/room/{Engine}")
 ├─ Cursory.Blazor/                ASP.NET Core Blazor Server host (entry point)
 │  ├─ Program.cs
 │  ├─ Hubs/RoomHub.cs
 │  ├─ Services/GameLoopService.cs
 │  ├─ Components/                App.razor, Layout/, Pages/Login.razor, Pages/Error.razor, ...
-│  └─ wwwroot/js/room.js          client renderer
+│  └─ wwwroot/
+│     ├─ shared/room-core.js      networking, input, camera, picking, HUD, audio, overlay
+│     ├─ canvas2d/                room.js + renderer.js (2D world adapter)
+│     ├─ three/                   room.js + renderer.js (Three.js world adapter)
+│     └─ babylon/                 room.js + renderer.js (Babylon.js world adapter)
 ├─ Cursory.Tests/                 NUnit 4 suite (AuthServiceTests, RoomStateTests, ...)
-├─ cypress/
-│  ├─ e2e/                        login.cy.js, level-select.cy.js
-│  └─ support/e2e.js
 ├─ docs/                          Codex documentation layer (see below)
 │  ├─ BIBLE.md, AMENDMENTS.md, USER_STORIES.md, BIBLE.digest.md (generated)
 │  └─ rfc/
@@ -327,9 +312,10 @@ layered, each fact owned by exactly one layer:
 - **[`docs/BIBLE.md`](docs/BIBLE.md)** (L0) — what Cursory IS / is NOT, architecture canon, the
   Laws (`CUR-LAW-1`..`CUR-LAW-9`), verified state, active frontier, quality bar, glossary.
 - **[`docs/AMENDMENTS.md`](docs/AMENDMENTS.md)** (L1) — append-only change log; an amendment
-  wins over the bible. Currently one entry, `CUR-A1`: Aether.Physics2D rigid bodies replaced the
-  original sum-of-springs model (see [above](#the-cooperative-draghtml-prototype)); switches and
-  gated doors were retired in the process.
+  wins over the bible. `CUR-A1`: Aether.Physics2D rigid bodies replaced the original
+  sum-of-springs model (see [above](#the-cooperative-draghtml-prototype)); switches and gated
+  doors were retired in the process. `CUR-A2`: the single Canvas2D `room.js` was split into a
+  shared core plus three parallel renderers (Canvas2D/Three.js/Babylon.js).
 - **[`docs/USER_STORIES.md`](docs/USER_STORIES.md)** (L2) — `CUR-US-<Epic><n>` stories; every ✅
   cites its verifying NUnit test.
 - **[`docs/rfc/`](docs/rfc)** — design notes that graduate into the bible + stories.
@@ -350,6 +336,7 @@ layered, each fact owned by exactly one layer:
 - [x] Room voting — reset or level switch (2/3 quorum, 15 s timeout)
 - [x] Circuit levels — wires, terminals, battery/resistor/bulb
 - [x] Azure App Service workflow + `MindAttic.Deploy` entry (idle until App Service exists)
+- [x] Three parallel renderers — Canvas2D, Three.js, Babylon.js — sharing one backend
 - [ ] Multiple rooms / lobby
 - [ ] Per-room state persistence (currently in-memory)
 - [ ] Mobile (touch) input

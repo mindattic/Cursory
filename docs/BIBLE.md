@@ -4,7 +4,7 @@ project: Cursory
 code: CUR
 layer: bible
 status: living
-updated: 2026-06-07
+updated: 2026-09-04
 ---
 
 # Cursory — Project Bible
@@ -53,8 +53,12 @@ and where you grab decides how it turns.
 ## 4. Architecture canon {#CUR-§4}
 
 ```
-                 browser (HTML5 canvas)
-                 wwwroot/js/room.js  ── clientToWorld, pan/zoom, render+interp
+        browser — three parallel renderers, one shared backend (CUR-A2)
+        wwwroot/shared/room-core.js — networking, input, camera, picking, HUD, audio,
+                                       + the overlay (cursors/tethers/whistles/labels/minimap)
+        wwwroot/{canvas2d,three,babylon}/room.js + renderer.js — world adapter only
+        (canvas2d: 2D calls on #room-canvas · three/babylon: WebGL meshes on #room-canvas,
+         orthographic top-down camera, overlay drawn on a transparent #room-overlay on top)
                         │   ▲
             Move/Grab/  │   │  Geometry (once) + Snapshot (30 Hz) + LevelLoaded
             Release/    │   │
@@ -66,7 +70,8 @@ and where you grab decides how it turns.
                    │              forwarded headers · seed users   │
                    │  Hubs/RoomHub.cs        write-only SignalR     │
                    │  Services/GameLoopService.cs  30 Hz tick loop  │
-                   │  Cursory.Shared/…/Home.razor  gated room page  │
+                   │  Cursory.Shared/…/EnginePicker.razor  "/"      │
+                   │  Cursory.Shared/…/Home.razor  "/room/{Engine}" │
                    └───────────────┬─────────────────────────────┘
                                    │ owns
                    ┌───────────────▼─────────────────────────────┐
@@ -77,10 +82,13 @@ and where you grab decides how it turns.
                    └───────────────────────────────────────────────┘
 ```
 
+See [CUR-A2](AMENDMENTS.md#CUR-A2) for the full renderer-split rationale and consequences.
+
 ### 4.1 Projects
 - `Cursory.Core/Cursory.Core.csproj` — domain models + services. No ASP.NET dependency.
-- `Cursory.Shared/Cursory.Shared.csproj` — Razor components rendered by the host
-  (`Cursory.Shared/Components/Pages/Home.razor`, the gated room page).
+- `Cursory.Shared/Cursory.Shared.csproj` — Razor components rendered by the host:
+  `EnginePicker.razor` (`"/"`, links to the three renderer routes) and `Home.razor`
+  (`"/room/{Engine}"`, the gated room page — see [CUR-A2](AMENDMENTS.md#CUR-A2)).
 - `Cursory.Blazor/Cursory.Blazor.csproj` — the ASP.NET Core Blazor Server host (entry point).
 - `Cursory.Tests/Cursory.Tests.csproj` — NUnit test project.
 - Solution: `Cursory.slnx`. Shared build config: `Directory.Build.props`.
@@ -218,9 +226,10 @@ Build/test evidence (recorded 2026-06-07): see the build/test run in the impleme
   `VoteAndLevelTests`.
 - ✅ **Circuit**: bulb lights on a complete series loop; dark on a gap; dark when the resistor is
   bypassed — `CircuitTests`.
-- 🟡 **Realtime UI / SignalR end-to-end**: exercised only by hand + `cypress/` (login,
-  level-select). No automated browser run is wired into `dotnet test`; the live multiplayer feel
-  (render/interp, pan/minimap, whistle audio) is unverified by an automated gate.
+- 🟡 **Realtime UI / SignalR end-to-end**: exercised only by hand. Cypress was tried and removed
+  (see [CUR-A2](AMENDMENTS.md#CUR-A2)) — no automated browser run is wired into `dotnet test`; the
+  live multiplayer feel (render/interp, pan/minimap, whistle audio) is unverified by an automated
+  gate.
 - ⬜ **Deploy**: `.github/workflows/azure-deploy.yml` is wired but idle — no `cursory` App Service
   / publish-profile secret yet.
 

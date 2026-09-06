@@ -13,6 +13,27 @@ using Cursory.Core.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Dev-only convenience: a gitignored .env at the repo root (KEY=VALUE per line, '#' comments
+// allowed) pre-fills the login form so a local dev doesn't retype the seeded demo credentials
+// every run. Never read outside Development, and never committed (see .gitignore).
+if (builder.Environment.IsDevelopment())
+{
+    var envPath = Path.Combine(builder.Environment.ContentRootPath, "..", ".env");
+    if (File.Exists(envPath))
+    {
+        var envValues = new Dictionary<string, string?>();
+        foreach (var line in File.ReadAllLines(envPath))
+        {
+            var trimmed = line.Trim();
+            if (trimmed.Length == 0 || trimmed.StartsWith('#')) continue;
+            var idx = trimmed.IndexOf('=');
+            if (idx <= 0) continue;
+            envValues[trimmed[..idx].Trim()] = trimmed[(idx + 1)..].Trim();
+        }
+        builder.Configuration.AddInMemoryCollection(envValues);
+    }
+}
+
 builder.Services.AddCursoryCore(builder.Configuration);
 
 // Server-authoritative physics tick. Runs at 30Hz, broadcasts WorldSnapshot to all clients.

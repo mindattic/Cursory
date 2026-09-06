@@ -90,8 +90,8 @@ updated: 2026-06-07
   as a per-colour tone. *Server side (`RecordWhistle`, snapshot windowing) is covered indirectly;
   the client ripple + Web Audio tone are unverified by an automated gate.*
 - **CUR-US-E3 🟡** As a player, the HUD shows a connection-status pill and SignalR auto-reconnects.
-  *Hand-verified; `cypress/e2e/login.cy.js` + `level-select.cy.js` exist but aren't wired into the
-  test gate.*
+  *Hand-verified only; no automated browser gate (Cypress was tried and removed — not useful for
+  this project — see [CUR-A2](AMENDMENTS.md#CUR-A2)).*
 
 ## Epic F — Deploy
 - **CUR-US-F1 ⬜** As an operator, every push to `main` deploys Cursory to an Azure App Service.
@@ -104,7 +104,7 @@ Dependency-ordered toward a shippable shared instance:
    on (unblocks a real shared URL).
 2. ⬜ Per-room state persistence (so a restart doesn't wipe progress) — prerequisite for lobbies.
 3. ⬜ Multiple rooms / a lobby (depends on persistence).
-4. 🟡 Wire the `cypress/` e2e specs into CI so Epic E can graduate from 🟡 → ✅.
+4. ⬜ Stand up an automated browser gate for Epic E (Cypress didn't fit; see [CUR-A2](AMENDMENTS.md#CUR-A2)) so it can graduate from 🟡 → ✅.
 5. 🟡 Adopt `MindAttic.Authentication` ([HOUSE-LAW-7]; deviation [CUR-LAW-9](BIBLE.md#CUR-LAW-9)).
 6. ⬜ Mobile / touch input.
 7. ⬜ Re-port switches + gated doors onto the engine (see [CUR-A1](AMENDMENTS.md#CUR-A1)).

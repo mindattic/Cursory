@@ -1,0 +1,47 @@
+@page "/"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+
+<PageTitle>Cursory</PageTitle>
+
+<div class="picker-shell">
+    <div class="picker-card">
+        <div class="picker-header">
+            <span class="picker-dot" style="background:@Color"></span>
+            <h1>@DisplayName</h1>
+        </div>
+        <p class="picker-sub">Same game, different engine — pick a renderer to enter the room.</p>
+        <div class="picker-links">
+            <a class="picker-link" href="/room/canvas2d">
+                <span class="picker-link-title">Canvas2D</span>
+                <span class="picker-link-sub">The original hand-rolled 2D renderer.</span>
+            </a>
+            <a class="picker-link" href="/room/three">
+                <span class="picker-link-title">Three.js</span>
+                <span class="picker-link-sub">WebGL, top-down orthographic camera.</span>
+            </a>
+            <a class="picker-link" href="/room/babylon">
+                <span class="picker-link-title">Babylon.js</span>
+                <span class="picker-link-sub">WebGL, top-down orthographic camera.</span>
+            </a>
+        </div>
+        <form method="post" action="/api/auth/logout" class="picker-logout">
+            <AntiforgeryToken />
+            <button type="submit">Sign out</button>
+        </form>
+    </div>
+</div>
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState> AuthStateTask { get; set; } = default!;
+
+    private string DisplayName { get; set; } = "";
+    private string Color { get; set; } = "#7F77DD";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask;
+        var user = state.User;
+        DisplayName = user.Identity?.Name ?? "Anon";
+        Color = user.FindFirst("Color")?.Value ?? "#7F77DD";
+    }
+}

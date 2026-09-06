@@ -376,3 +376,66 @@ html, body {
     width: 100%;
     height: 100%;
 }
+/* Transparent 2D layer stacked over #room-canvas for the WebGL engines (three/babylon) — the
+   overlay draws (cursors, tethers, whistles, labels, mass numbers, minimap) go here so they stay
+   on top of whatever the WebGL world renderer draws underneath. pointer-events:none so it never
+   intercepts the mouse/wheel listeners bound to the viewport/canvas. */
+#room-overlay {
+    display: block;
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+}
+
+/* ── engine picker ─────────────────────────────────────────────────── */
+.picker-shell {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: radial-gradient(ellipse at center, #2a2a2a 0%, #0f0f0f 80%);
+}
+.picker-card {
+    background: #1a1a1a;
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 12px;
+    padding: 32px;
+    width: min(460px, 90vw);
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+}
+.picker-header { display: flex; align-items: center; gap: 10px; }
+.picker-header h1 { margin: 0; font-size: 24px; font-weight: 500; letter-spacing: 0.5px; }
+.picker-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.picker-sub { margin: 0; color: rgba(255,255,255,0.55); font-size: 14px; }
+.picker-links { display: flex; flex-direction: column; gap: 10px; }
+.picker-link {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 14px 16px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 8px;
+    color: #f6f5f0;
+    text-decoration: none;
+}
+.picker-link:hover { background: rgba(127,119,221,0.1); border-color: #7F77DD; }
+.picker-link-title { font-size: 15px; font-weight: 500; }
+.picker-link-sub { font-size: 12px; color: rgba(255,255,255,0.5); }
+.picker-logout { margin: 0; }
+.picker-logout button {
+    width: 100%;
+    padding: 10px;
+    background: transparent;
+    border: 1px solid rgba(255,255,255,0.18);
+    color: rgba(255,255,255,0.8);
+    border-radius: 6px;
+    font-size: 13px;
+    cursor: pointer;
+}
+.picker-logout button:hover { background: rgba(255,255,255,0.06); }

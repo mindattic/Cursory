@@ -22,3 +22,6 @@ node_modules/
 *.log
 *.tmp
 .claude/quicksave.md
+
+## Local dev-only secrets (auto-fill login credentials; never committed)
+.env

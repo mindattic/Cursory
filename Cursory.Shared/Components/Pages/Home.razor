@@ -1,11 +1,50 @@
-@page "/"
+@page "/room/{Engine}"
 @using Cursory.Core.Services
 @attribute [Microsoft.AspNetCore.Authorization.Authorize]
 @inject IJSRuntime JS
+@inject NavigationManager Nav
 @implements IAsyncDisposable
 @rendermode RenderMode.InteractiveServer
 
 <PageTitle>Cursory</PageTitle>
+
+@* Each engine's client-side library is a plain CDN <script> (matching the SignalR client in
+   App.razor) — loaded before OnAfterRenderAsync's dynamic import of {Engine}/room.js so
+   window.THREE / window.BABYLON already exist when that module runs. Pinned exact versions. *@
+@if (Engine == "three")
+{
+    @* Modern three.js (r150+) no longer ships a classic UMD build — only ES modules — so this
+       imports the module build and assigns it to window.THREE, matching the classic-global
+       pattern every other engine/room.js entry point expects (see three/room.js). *@
+    <script type="module">
+        import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.min.js';
+        window.THREE = THREE;
+    </script>
+}
+else if (Engine == "babylon")
+{
+    @* Blazor Server's static-prerender + interactive-hydrate cycle renders this component's
+       markup twice, and it special-cases <script> elements to force a fresh DOM insertion (hence
+       execution) each time — so this tag runs twice per page load. Babylon's classic UMD/webpack
+       bundle isn't idempotent to that (it throws "Cannot set property ... which has only a
+       getter" on the second run), and jsDelivr's ESM wrapper for it doesn't expose constructable
+       classes correctly, so neither of three.js's fixes applies here. Guard explicitly instead:
+       only inject the real <script src> the first time; the second execution sees window.BABYLON
+       already set and no-ops. *@
+    <script>
+        (function () {
+            // A synchronous flag, not `if (window.BABYLON)` — the script is still loading
+            // asynchronously when the second (hydrate) execution of this tag would otherwise
+            // also see BABYLON undefined and inject a second copy.
+            if (window.__cursoryBabylonLoading) return;
+            window.__cursoryBabylonLoading = true;
+            var s = document.createElement('script');
+            s.src = 'https://cdn.jsdelivr.net/npm/babylonjs@7.36.0/babylon.max.js';
+            s.crossOrigin = 'anonymous';
+            document.head.appendChild(s);
+        })();
+    </script>
+}
 
 <div class="room-shell">
     <div class="room-hud">
@@ -62,11 +101,21 @@
     </div>
     <div id="room-viewport" class="room-viewport">
         <canvas id="room-canvas"></canvas>
+        @* WebGL engines draw the solid game world here; cursors/tethers/whistles/labels/minimap
+           still need a 2D context, so they get a transparent layer on top (see room-core.js).
+           canvas2d has no need for this — it draws everything on #room-canvas directly. *@
+        @if (Engine != "canvas2d")
+        {
+            <canvas id="room-overlay"></canvas>
+        }
     </div>
 </div>
 
 @code {
+    private static readonly string[] KnownEngines = ["canvas2d", "three", "babylon"];
+
     [CascadingParameter] private Task<AuthenticationState> AuthStateTask { get; set; } = default!;
+    [Parameter] public string Engine { get; set; } = "";
 
     private string DisplayName { get; set; } = "";
     private string UserId { get; set; } = "";
@@ -86,6 +135,11 @@
 
     protected override async Task OnInitializedAsync()
     {
+        if (Array.IndexOf(KnownEngines, Engine) < 0)
+        {
+            Nav.NavigateTo("/", forceLoad: true);
+            return;
+        }
         var state = await AuthStateTask;
         var user = state.User;
         DisplayName = user.Identity?.Name ?? "Anon";
@@ -95,8 +149,8 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (!firstRender) return;
-        jsModule = await JS.InvokeAsync<IJSObjectReference>("import", "./js/room.js");
+        if (!firstRender || Array.IndexOf(KnownEngines, Engine) < 0) return;
+        jsModule = await JS.InvokeAsync<IJSObjectReference>("import", $"./{Engine}/room.js");
         await jsModule.InvokeVoidAsync("start", new
         {
             userId = UserId,
