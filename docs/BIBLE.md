@@ -4,14 +4,14 @@ project: Cursory
 code: CUR
 layer: bible
 status: living
-updated: 2026-09-04
+updated: 2026-10-03
 ---
 
 # Cursory — Project Bible
 > Single source of truth for what Cursory IS, is NOT, and the rules that keep it coherent.
 > README says how to build/run; this says how to think about the system.
 
-Status legend: ✅ done (verified by a test/build) · 🟡 partial · ⬜ planned · 🗑️ cut · `living`.
+Status legend: ✅ done (verified by a test/build) · 🟡 partial · ⬜ planned · `living`.
 
 ## 1. The one sentence {#CUR-§1}
 Cursory is a Blazor Server multiplayer web app where every signed-in player's cursor renders
@@ -40,11 +40,15 @@ and where you grab decides how it turns.
   for an object's authoritative state. (verified by the `RoomStateTests` mechanics suite.)
 - **NOT a chat/social app.** There is deliberately no text channel. The whistle is the entire
   comms vocabulary.
-- **NOT a hand-rolled physics toy anymore.** The original "sum-of-springs" kinematics with switch
-  tiles and gated doors are gone; blocks, walls, and compound shapes are real
-  [Aether.Physics2D](#CUR-§4) rigid bodies. `SwitchTile`/`Door` models survive only as
-  unwired record types; `BlockState.StaticFriction` and the legacy `ShapeActor` dynamics fields
-  are reserved/`[JsonIgnore]`d. See [CUR-A1](AMENDMENTS.md#CUR-A1).
+- **NOT a hand-rolled physics toy.** Blocks (`bodyByBlock`), walls (`bodyByWall`), and compound
+  shapes (`bodyByShape`) are real [Aether.Physics2D](#CUR-§4) rigid bodies: top-down dry friction
+  is a `FrictionJoint` to a static ground, and a grab is a capped-force `FixedMouseJoint`, so
+  cooperative drag, pivots and torque come out of the solver. There are no switch tiles or gated
+  doors in play: `SwitchTile`/`Door`/`ShapeAttachment` are unwired record types and
+  `WorldSnapshot.Switches`/`.Doors` are always empty lists. `BlockState.StaticFriction` and the
+  legacy `ShapeActor` dynamics fields (`Vx`/`Vy`/`AngVel`/`MomentOfInertia`/`StaticFriction`/
+  `RotationalFriction`) are reserved/`[JsonIgnore]`d; the move-threshold derives from `Mass`
+  alone ([CUR-LAW-2](#CUR-LAW-2)).
 - **NOT multi-room (yet).** One shared room, in-memory only. Lobbies and per-room persistence are
   [frontier](#CUR-§7).
 - **NOT self-service signup.** There is no public registration; accounts are operator-seeded.
@@ -53,7 +57,7 @@ and where you grab decides how it turns.
 ## 4. Architecture canon {#CUR-§4}
 
 ```
-        browser — three parallel renderers, one shared backend (CUR-A2)
+        browser — three parallel renderers, one shared backend (§4.4)
         wwwroot/shared/room-core.js — networking, input, camera, picking, HUD, audio,
                                        + the overlay (cursors/tethers/whistles/labels/minimap)
         wwwroot/{canvas2d,three,babylon}/room.js + renderer.js — world adapter only
@@ -82,13 +86,11 @@ and where you grab decides how it turns.
                    └───────────────────────────────────────────────┘
 ```
 
-See [CUR-A2](AMENDMENTS.md#CUR-A2) for the full renderer-split rationale and consequences.
-
 ### 4.1 Projects
 - `Cursory.Core/Cursory.Core.csproj` — domain models + services. No ASP.NET dependency.
 - `Cursory.Shared/Cursory.Shared.csproj` — Razor components rendered by the host:
   `EnginePicker.razor` (`"/"`, links to the three renderer routes) and `Home.razor`
-  (`"/room/{Engine}"`, the gated room page — see [CUR-A2](AMENDMENTS.md#CUR-A2)).
+  (`"/room/{Engine}"`, the gated room page — see §4.4 below).
 - `Cursory.Blazor/Cursory.Blazor.csproj` — the ASP.NET Core Blazor Server host (entry point).
 - `Cursory.Tests/Cursory.Tests.csproj` — NUnit test project.
 - Solution: `Cursory.slnx`. Shared build config: `Directory.Build.props`.
@@ -111,8 +113,8 @@ See [CUR-A2](AMENDMENTS.md#CUR-A2) for the full renderer-split rationale and con
 - **`WorldLabel`** — a world signpost titling each puzzle area.
 - **`WorldSnapshot`** / **`WorldGeometryMessage`** — the per-tick broadcast vs. the once-per-connect
   static geometry.
-- **`SwitchTile`** / **`Door`** / **`ShapeAttachment`** — 🗑️ unwired legacy record types kept only
-  so old level data deserializes (see [CUR-A1](AMENDMENTS.md#CUR-A1)).
+- **`SwitchTile`** / **`Door`** / **`ShapeAttachment`** — unwired record types kept only so level
+  data deserializes; no level seeds them (see [§3](#CUR-§3)).
 - **`UserAccount`** + **`UserRoles`** (`Cursory.Core/Models/UserAccount.cs`) — username-based
   account, BCrypt `PasswordHash`, `SecurityStamp`, `Color`, `Role`.
 - **`WorldGeometry`** — compile-time constants: `Width`/`Height` = 10 000.
@@ -140,6 +142,31 @@ See [CUR-A2](AMENDMENTS.md#CUR-A2) for the full renderer-split rationale and con
   `CastVote`, `SetCursorCollision`, `SetSegmentedTether`. Methods never return state.
 - **`CursoryServices.AddCursoryCore`** — the DI registration (one front door's half of
   [HOUSE-LAW-6](#CUR-§5)); resolves `Cursory:UsersPath` or defaults to `%APPDATA%\MindAttic\Cursory\users.json`.
+
+### 4.4 Client renderers
+The same game renders through three interchangeable engines over one backend and one wire
+contract:
+- `Cursory.Blazor/wwwroot/shared/room-core.js` holds every renderer-agnostic concern: the SignalR
+  connection and all hub calls/handlers, input (Pointer Events — Babylon's `Engine` calls
+  `preventDefault()` on `pointerdown`, which suppresses compatibility mouse events), the pan/zoom
+  camera, grab picking, whistle audio, HUD wiring (vote/level/banner/status/pause/toggles), and the
+  vector/text overlay (signposts, cursors, tether/attach lines, whistle ripples, mass numbers,
+  minimap).
+- `wwwroot/canvas2d/`, `wwwroot/three/`, `wwwroot/babylon/` each hold a thin `room.js` entry point
+  and a `renderer.js` world adapter that draws only the solid world (grid, walls, blocks, shapes,
+  goals, switches, doors, circuit). canvas2d draws on the same `#room-canvas` as the overlay;
+  three/babylon draw flat unlit meshes through a top-down orthographic camera on `#room-canvas`,
+  with the overlay on a transparent `#room-overlay` stacked on top so cursors always line up.
+- `Home.razor` (`@page "/room/{Engine}"`, `Engine` ∈ `canvas2d`/`three`/`babylon`) loads the
+  matching `{Engine}/room.js` and, for WebGL, a CDN script: Three.js as `type="module"` assigning
+  `window.THREE` (upstream ships ES modules only); Babylon.js as a plain script with a synchronous
+  re-entry guard (`window.__cursoryBabylonLoading`) against Blazor's prerender-then-hydrate double
+  render. Both renderers read `window.THREE`/`window.BABYLON` lazily inside
+  `createWorldRenderer()`. `EnginePicker.razor` (`@page "/"`) lists the three routes.
+- Babylon's orthographic camera swaps `orthoLeft`/`orthoRight` to match the other engines' X
+  direction; that flips triangle winding, so its flat materials set `backFaceCulling = false`.
+- The three/babylon circuit (Level 14) is simplified versus canvas2d (no bulb glow gradient, no
+  resistor zigzag); the lit/unlit state and wire routing the puzzle depends on are the same.
 
 ## 5. The Laws {#CUR-§5}
 
@@ -206,8 +233,8 @@ lockout, security-stamp revalidation, antiforgery, per-IP login rate limit) rath
 a third way. Migration is tracked in [CUR-§7](#CUR-§7).
 
 ## 6. Verified state {#CUR-§6}
-Build/test evidence (recorded 2026-06-07): see the build/test run in the implementation report and
-[USER_STORIES.md](USER_STORIES.md) for the per-story test citations.
+Build/test evidence: `dotnet test Cursory.slnx` builds the solution and passes 80/80 NUnit tests
+(2026-10-03). Per-story test citations are in [USER_STORIES.md](USER_STORIES.md).
 
 - ✅ **Build**: `dotnet build Cursory.slnx` succeeds with `TreatWarningsAsErrors=true`
   (only `CS1591` missing-doc warnings are non-fatal). *(See §8.)*
@@ -226,12 +253,13 @@ Build/test evidence (recorded 2026-06-07): see the build/test run in the impleme
   `VoteAndLevelTests`.
 - ✅ **Circuit**: bulb lights on a complete series loop; dark on a gap; dark when the resistor is
   bypassed — `CircuitTests`.
-- 🟡 **Realtime UI / SignalR end-to-end**: exercised only by hand. Cypress was tried and removed
-  (see [CUR-A2](AMENDMENTS.md#CUR-A2)) — no automated browser run is wired into `dotnet test`; the
-  live multiplayer feel (render/interp, pan/minimap, whistle audio) is unverified by an automated
-  gate.
-- ⬜ **Deploy**: `.github/workflows/azure-deploy.yml` is wired but idle — no `cursory` App Service
-  / publish-profile secret yet.
+- 🟡 **Realtime UI / SignalR end-to-end**: exercised only by hand. No automated browser run is
+  wired into `dotnet test`; the live multiplayer feel (render/interp, pan/minimap, whistle audio)
+  is unverified by an automated gate.
+- 🟡 **Deploy**: `.github/workflows/azure-deploy.yml` builds and publishes `Cursory.Blazor` to the
+  `cursory` Azure App Service on every push to `main` (runs succeed; `AZURE_WEBAPP_PUBLISH_PROFILE`
+  is set; the MindAttic.Deploy `cursory` entry is enabled). The App Service itself is **stopped**,
+  so there is no running public instance.
 
 ## 7. Active frontier {#CUR-§7}
 - ⬜ Multiple rooms / a lobby (today: one shared in-memory room).
@@ -240,9 +268,10 @@ Build/test evidence (recorded 2026-06-07): see the build/test run in the impleme
 - ⬜ Port switches + gated doors onto the engine (the re-themed levels stand in for them today).
 - 🟡 Adopt `MindAttic.Authentication` ([HOUSE-LAW-7]) — replacing the bespoke `AuthService` +
   JSON store with the SQL-backed shared library. Recorded deviation: [CUR-LAW-9](#CUR-LAW-9).
-- 🟡 Turn the Azure deploy on (provision App Service, set the publish-profile secret, flip
-  `MindAttic.Deploy/projects.json → apps[].cursory.disabled`).
-- See [docs/rfc/](rfc/) for design notes graduating into this bible + the stories.
+- 🟡 Run a public instance (start the stopped `cursory` App Service; the deploy pipeline already
+  publishes to it).
+- ⬜ An automated browser gate for the realtime UI (Epic E in [USER_STORIES.md](USER_STORIES.md)).
+- Open design notes: [RFC 0001 — Multiple rooms & per-room persistence](rfc/0001-rooms-and-persistence.md).
 
 ## 8. Quality bar {#CUR-§8}
 Definition of done for a feature (refines [HOUSE-LAW-8]):

@@ -114,7 +114,7 @@ pre:hover .cpbtn{opacity:1}
 <p>A cooperative multiplayer puzzle game in the browser: every player's cursor shares one 10,000 x 10,000 world, and heavy blocks, shapes and circuits only move when you pull together.</p>
 <p><img src="https://img.shields.io/badge/language-C%23-239120" alt="C#"> <img src="https://img.shields.io/badge/.NET-10-512BD4" alt=".NET"> <img src="https://img.shields.io/badge/Blazor-Server-5C2D91" alt="Blazor Server"> <img src="https://img.shields.io/badge/SignalR-30%20Hz-0078D4" alt="SignalR"> <img src="https://img.shields.io/badge/physics-Aether.Physics2D-555555" alt="Physics"> <img src="https://img.shields.io/badge/status-prototype-orange" alt="Status"></p>
 <p><img src="docs/images/cooperative-drag-prototype.png" alt="Two cursors tethered to one block in the cooperative-drag prototype; their summed pull exceeds the friction threshold and the HUD reads Moving"></p>
-<p>The capture above is the standalone <a href="cooperative-drag.html">cooperative-drag.html</a> prototype of the core mechanic: open it in any browser, no build needed. The full game is a Blazor Server app; its deploy target is <code>https://cursory.azurewebsites.net</code>, which is stopped at the time of writing, so there is no public demo right now.</p>
+<p>The capture above is the standalone <a href="cooperative-drag.html">cooperative-drag.html</a> prototype of the core mechanic: open it in any browser, no build needed. The full game is a Blazor Server app. Its Azure App Service deploy target (<code>cursory</code>) is stopped, so there is no public demo: run it locally (see Quick start).</p>
 <h2 id="why">Why</h2>
 <ul>
 <li>Play together without typing: there is no chat, only a whistle. Cooperation happens through the physics.</li>
@@ -216,7 +216,7 @@ dotnet run --project Cursory.Blazor</code></pre>
 <p>Open <code>https://localhost:7238</code> (or <code>http://localhost:5238</code>) and sign in with one of the seeded accounts below. Pick a renderer. To see cooperative play locally, open a second browser window (or an incognito window) and sign in as the other seeded user: both cursors appear in the same room.</p>
 <p>To feel the core mechanic without the app, open <a href="cooperative-drag.html">cooperative-drag.html</a> directly in a browser.</p>
 <h2 id="how-it-works">How it works</h2>
-<pre><code class="language-text">        browser: three parallel renderers, one shared backend (CUR-A2)
+<pre><code class="language-text">        browser: three parallel renderers, one shared backend
         wwwroot/shared/room-core.js  networking, input, camera, picking, HUD, audio,
                                      + the overlay (cursors/tethers/whistles/labels/minimap)
         wwwroot/{canvas2d,three,babylon}/room.js + renderer.js  world adapter only
@@ -306,7 +306,7 @@ dotnet run --project Cursory.Blazor</code></pre>
 <li><code>Services/GameLoopService.cs</code>: the 30 Hz <code>BackgroundService</code>. Steps <code>RoomState</code>, evicts stale cursors every 30 ticks, rebroadcasts geometry and announces a level on change, broadcasts the snapshot, idles when nobody is connected, and logs slow ticks.</li>
 <li><code>Components/</code>: <code>App.razor</code>, <code>Layout/MainLayout.razor</code>, <code>Pages/Login.razor</code>, <code>Pages/Error.razor</code>, <code>RedirectToLogin.razor</code>, <code>Routes.razor</code>.</li>
 <li><code>wwwroot/shared/room-core.js</code>: the renderer-agnostic client core. SignalR connection, <code>clientToWorld</code> transform, pan and zoom, grab picking, whistle audio, HUD (level select, reset vote, connection-status pill) and the vector and text overlay (cursors, tethers, whistle ripples, labels, mass numbers, minimap).</li>
-<li><code>wwwroot/canvas2d/</code>, <code>wwwroot/three/</code>, <code>wwwroot/babylon/</code>: one <code>room.js</code> entry point and one <code>renderer.js</code> world adapter per engine, drawing only the solid game world (grid, walls, blocks, shapes, goals, switches, doors, circuit). See <a href="docs/AMENDMENTS.md#CUR-A2">CUR-A2</a>.</li>
+<li><code>wwwroot/canvas2d/</code>, <code>wwwroot/three/</code>, <code>wwwroot/babylon/</code>: one <code>room.js</code> entry point and one <code>renderer.js</code> world adapter per engine, drawing only the solid game world (grid, walls, blocks, shapes, goals, switches, doors, circuit). See <a href="docs/BIBLE.md">docs/BIBLE.md</a>, section 4.4.</li>
 <li>Two auth endpoints: <code>POST /api/auth/login</code> (antiforgery, rate limit, open-redirect guard; issues the cookie) and <code>POST /api/auth/logout</code>.</li>
 </ul>
 <h2 id="accounts">Accounts</h2>
@@ -367,7 +367,7 @@ dotnet run --project Cursory.Blazor</code></pre>
 <li>Click the block to attach a cursor at that point; release and click again to attach another while the first stays put. Re-grab a cursor by clicking near its head.</li>
 <li>A live HUD prints the net force and whether the block is "Moving" or "Below threshold" (green or grey block).</li>
 </ul>
-<p>It is a quick way to feel why two cursors are needed to move a heavy block. It is not wired to the current game: the shipped app replaced the spring model with Aether.Physics2D rigid bodies, <code>FrictionJoint</code>s and <code>FixedMouseJoint</code> grabs (see <a href="docs/AMENDMENTS.md#CUR-A1">CUR-A1</a>). The file is not part of the solution and is not built, tested or served by <code>Cursory.Blazor</code>.</p>
+<p>It is a quick way to feel why two cursors are needed to move a heavy block. It is not wired to the current game: the game uses Aether.Physics2D rigid bodies, <code>FrictionJoint</code>s and <code>FixedMouseJoint</code> grabs instead of springs (see <a href="docs/BIBLE.md">docs/BIBLE.md</a>, section 3). The file is not part of the solution and is not built, tested or served by <code>Cursory.Blazor</code>.</p>
 <h2 id="project-layout">Project layout</h2>
 <pre><code class="language-text">Cursory/
 ├─ Cursory.slnx                  solution file (Core, Shared, Blazor, Tests)
@@ -400,15 +400,7 @@ dotnet run --project Cursory.Blazor</code></pre>
 │  └─ build-readme.ps1           wrapper for the shared README to HTML engine
 └─ .github/workflows/azure-deploy.yml</code></pre>
 <h2 id="deployment">Deployment</h2>
-<p>The workflow at <a href=".github/workflows/azure-deploy.yml">.github/workflows/azure-deploy.yml</a> runs on push to <code>main</code> (or manually): restore, publish <code>Cursory.Blazor</code>, upload the artifact, then deploy it to the <code>cursory</code> Azure App Service (Production slot) using the <code>AZURE_WEBAPP_PUBLISH_PROFILE</code> repository secret. The target address is <code>https://cursory.azurewebsites.net</code>.</p>
-<p>One-time setup:</p>
-<ol>
-<li>Provision an Azure App Service named <code>cursory</code> (.NET 10 runtime, Linux or Windows).</li>
-<li>Download the publish profile from the App Service in the Azure portal.</li>
-<li>Add it as the GitHub secret <code>AZURE_WEBAPP_PUBLISH_PROFILE</code> on <code>mindattic/Cursory</code>.</li>
-<li>Push to <code>main</code>.</li>
-<li>Set the <code>cursory</code> entry in <code>MindAttic.Deploy/projects.json</code> (<code>apps[]</code>) to <code>disabled: false</code>.</li>
-</ol>
+<p>The workflow at <a href=".github/workflows/azure-deploy.yml">.github/workflows/azure-deploy.yml</a> runs on push to <code>main</code> (or manually): restore, publish <code>Cursory.Blazor</code>, upload the artifact, then deploy it to the <code>cursory</code> Azure App Service (Production slot) using the <code>AZURE_WEBAPP_PUBLISH_PROFILE</code> repository secret. The secret is set, the <code>cursory</code> entry in <code>MindAttic.Deploy/projects.json</code> is enabled, and the workflow runs succeed, but the App Service is stopped, so nothing is served publicly. Start the App Service (with WebSockets enabled, which SignalR needs) to bring an instance up.</p>
 <h2 id="limitations">Limitations</h2>
 <ul>
 <li>One shared room, in memory only: state is lost on restart.</li>
@@ -431,9 +423,9 @@ dotnet run --project Cursory.Blazor</code></pre>
 <p>This repo follows the MindAttic Codex documentation standard; canon lives in <code>docs/</code>, each fact in exactly one layer:</p>
 <ul>
 <li><a href="docs/BIBLE.md">docs/BIBLE.md</a>: what Cursory is and is not, architecture canon, the Laws (<code>CUR-LAW-1</code> to <code>CUR-LAW-9</code>), verified state, active frontier, quality bar, glossary.</li>
-<li><a href="docs/AMENDMENTS.md">docs/AMENDMENTS.md</a>: append-only change log; an amendment wins over the bible. <code>CUR-A1</code> (rigid bodies replace sum-of-springs), <code>CUR-A2</code> (three parallel renderers).</li>
+<li><a href="docs/AMENDMENTS.md">docs/AMENDMENTS.md</a>: pending decisions not yet folded into the bible (normally empty).</li>
 <li><a href="docs/USER%5FSTORIES.md"><code>docs/USER_STORIES.md</code></a>: <code>CUR-US</code> stories; every done story cites its verifying NUnit test.</li>
-<li><a href="docs/rfc">docs/rfc/</a>: design notes that graduate into the bible and stories.</li>
+<li><a href="docs/rfc">docs/rfc/</a>: open design notes (currently RFC 0001, multiple rooms and per-room persistence).</li>
 <li><a href="docs/BIBLE.digest.md">docs/BIBLE.digest.md</a>: generated by <code>tools/codex.ps1 digest</code>; never hand-edited.</li>
 <li><a href="AGENTS.md">AGENTS.md</a>: instructions for coding agents working in this repo.</li>
 </ul>

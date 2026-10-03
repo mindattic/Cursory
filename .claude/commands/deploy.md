@@ -1,6 +1,6 @@
 Deploy Cursory via **MindAttic.Deploy** (sibling repo at `D:\Projects\MindAttic\MindAttic.Deploy`). MindAttic.Deploy is the source of truth for every MindAttic deploy; this command shims into it.
 
-The deploy fires the project's GitHub Actions workflow (`azure-deploy.yml`) by pushing `main`. The workflow then publishes `Cursory.Blazor` and lands it on the `cursory` Azure App Service slot at **https://cursory.azurewebsites.net** using `AZURE_WEBAPP_PUBLISH_PROFILE`.
+The deploy fires the project's GitHub Actions workflow (`azure-deploy.yml`) by pushing `main`. The workflow then publishes `Cursory.Blazor` and lands it on the `cursory` Azure App Service slot using `AZURE_WEBAPP_PUBLISH_PROFILE`. The App Service is currently **stopped**, so a successful deploy does not make the game reachable; say so in the summary.
 
 Run this command and report the result:
 
@@ -20,4 +20,4 @@ Notes:
 - For a no-push rehearsal (build only, no push), append `--dry-run`: `npm run deploy -- --app cursory --dry-run`.
 - App profile lives in `MindAttic.Deploy/projects.json` under `apps[]` slug `cursory`. To turn the deploy off temporarily, set `"disabled": true` there — the CLI will then skip it (and surface the `disabledNote` when applicable).
 - The `cursory` App Service has WebSockets enabled (required for SignalR). If a deploy reports SignalR connect failures post-deploy, check `az webapp config show --name cursory --resource-group MyApps --query "webSocketsEnabled"`.
-- Two seeded accounts ship in the deploy: `gungreeneyes` and `gideonkain`, both with password `Happygirl1005`. They're idempotently seeded on every cold start; SeedUser also migrates the canonical case if the seed config changes (so old `GunGreenEyes` records get normalised to lowercase on the next boot).
+- Two seeded accounts ship in the deploy: `gungreeneyes` and `gideonkain`, both with the operator-chosen password set in `Cursory.Blazor/Program.cs` (`SeedUser` / `SetAllPasswords`). They're idempotently seeded on every cold start; SeedUser also migrates the canonical case if the seed config changes (so old `GunGreenEyes` records get normalised to lowercase on the next boot).

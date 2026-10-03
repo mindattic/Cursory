@@ -55,8 +55,8 @@ public class CursorState
 }
 
 /// <summary>
-/// A draggable rigid body. Sum-of-springs physics: net force = sum over attached cursors of
-/// k * (cursor_world - anchor_world). When |net| exceeds StaticFriction, the body accelerates.
+/// A draggable axis-aligned rigid body, simulated as an Aether.Physics2D body. It moves when the
+/// pulls of the cursors grabbing it sum past its <see cref="Mass"/>.
 /// </summary>
 public class BlockState
 {
@@ -112,8 +112,8 @@ public class Whistle
 }
 
 /// <summary>
-/// A static rectangular obstacle. Blocks colliding with a wall stop at the wall surface.
-/// Cursors pass through walls freely (they're abstract pointers, not bodies).
+/// A static rectangular obstacle (a static engine body). Blocks and shapes collide with it;
+/// cursors are nudged out of it only when a player turns cursor-vs-wall collision on.
 /// </summary>
 public class Wall
 {
@@ -125,9 +125,8 @@ public class Wall
 }
 
 /// <summary>
-/// A pressure-pad tile. While the number of cursors inside the tile's AABB is at or above
-/// <see cref="RequiredCount"/>, IsActive becomes true and stays true for the tick. Cursors
-/// only need to be inside — no click required. Connected doors read this state.
+/// A pressure-pad tile record. Not wired into the physics engine: no level seeds one and
+/// <see cref="WorldSnapshot.Switches"/> is always empty. Kept so level data still deserializes.
 /// </summary>
 public class SwitchTile
 {
@@ -143,9 +142,8 @@ public class SwitchTile
 }
 
 /// <summary>
-/// A door that toggles between solid and pass-through based on a set of switches. The
-/// door is open (pass-through) when ALL referenced switches are active simultaneously.
-/// Visually rendered like a wall but coloured.
+/// A switch-gated door record. Not wired into the physics engine: no level seeds one and
+/// <see cref="WorldSnapshot.Doors"/> is always empty. Kept so level data still deserializes.
 /// </summary>
 public class Door
 {
@@ -187,10 +185,9 @@ public class ShapePiece
 
 /// <summary>
 /// Compound rigid actor with rotation. The shape is built from one or more <see cref="ShapePiece"/>
-/// rectangles in body-local space, so an L is two pieces joined at a corner. Unlike <see cref="BlockState"/>
-/// (axis-aligned, no rotation), this carries Angle + AngVel and resolves forces via torque
-/// (r × F) so cooperating cursors can rotate the body to thread it through a narrow gap. Collision
-/// against walls uses the Separating Axis Theorem against each piece's oriented box.
+/// rectangles in body-local space, so an L is two pieces joined at a corner. It is one Aether.Physics2D
+/// body with a fixture per piece, so offset pulls from cooperating cursors rotate it to thread it
+/// through a narrow gap.
 /// </summary>
 public class ShapeActor
 {
@@ -215,9 +212,8 @@ public class ShapeActor
 }
 
 /// <summary>
-/// A cursor's grab anchor on a compound rigid actor. Anchor lives in body-local coordinates;
-/// rotating it by the actor's current Angle and translating by (X, Y) gives the anchor's
-/// world position, which is what the spring force pulls toward.
+/// A cursor's grab anchor on a compound rigid actor, in body-local coordinates. Not used by the
+/// engine (grabs are tracked on <see cref="CursorState"/>); kept so level data still deserializes.
 /// </summary>
 public class ShapeAttachment
 {

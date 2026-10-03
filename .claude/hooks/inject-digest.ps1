@@ -18,7 +18,7 @@ try {
 The following is the AUTHORITATIVE Cursory (CUR) project digest, generated from docs/BIBLE.md.
 It is the source of truth for what Cursory is, its laws, and its verified state. When it conflicts
 with stale comments or older docs, the digest (and the full docs/BIBLE.md) wins. Full detail and
-stable anchors live in docs/BIBLE.md, docs/USER_STORIES.md, and docs/AMENDMENTS.md.
+stable anchors live in docs/BIBLE.md and docs/USER_STORIES.md.
 
 "@
   $context = $preamble + $digest

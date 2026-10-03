@@ -4,11 +4,11 @@ project: Cursory
 code: CUR
 layer: stories
 status: living
-updated: 2026-06-07
+updated: 2026-10-03
 ---
 
 # Cursory — User Stories
-> ✅ done (shipped & tested) · 🟡 partial · ⬜ planned · 🗑️ cut. Every ✅ cites its verifying test.
+> ✅ done (shipped & tested) · 🟡 partial · ⬜ planned. Every ✅ cites its verifying test.
 > Test tokens are NUnit method names in `Cursory.Tests/`.
 
 ## Epic A — Membership & access
@@ -90,25 +90,20 @@ updated: 2026-06-07
   as a per-colour tone. *Server side (`RecordWhistle`, snapshot windowing) is covered indirectly;
   the client ripple + Web Audio tone are unverified by an automated gate.*
 - **CUR-US-E3 🟡** As a player, the HUD shows a connection-status pill and SignalR auto-reconnects.
-  *Hand-verified only; no automated browser gate (Cypress was tried and removed — not useful for
-  this project — see [CUR-A2](AMENDMENTS.md#CUR-A2)).*
+  *Hand-verified only; no automated browser gate.*
 
 ## Epic F — Deploy
-- **CUR-US-F1 ⬜** As an operator, every push to `main` deploys Cursory to an Azure App Service.
-  *Workflow `.github/workflows/azure-deploy.yml` is wired but idle (no App Service / publish-profile
-  secret; `MindAttic.Deploy` entry disabled).*
+- **CUR-US-F1 🟡** As an operator, every push to `main` deploys Cursory to an Azure App Service.
+  *`.github/workflows/azure-deploy.yml` builds and publishes to the `cursory` App Service on every
+  push (runs succeed, publish-profile secret set), but the App Service is stopped, so there is no
+  running public instance. No automated test covers the deploy.*
 
 ## Priority backlog
 Dependency-ordered toward a shippable shared instance:
-1. ⬜ **CUR-US-F1** — provision the `cursory` App Service + publish-profile secret; flip the deploy
-   on (unblocks a real shared URL).
+1. 🟡 **CUR-US-F1** — start the stopped `cursory` App Service (unblocks a real shared URL).
 2. ⬜ Per-room state persistence (so a restart doesn't wipe progress) — prerequisite for lobbies.
 3. ⬜ Multiple rooms / a lobby (depends on persistence).
-4. ⬜ Stand up an automated browser gate for Epic E (Cypress didn't fit; see [CUR-A2](AMENDMENTS.md#CUR-A2)) so it can graduate from 🟡 → ✅.
+4. ⬜ Stand up an automated browser gate for Epic E so it can graduate from 🟡 → ✅.
 5. 🟡 Adopt `MindAttic.Authentication` ([HOUSE-LAW-7]; deviation [CUR-LAW-9](BIBLE.md#CUR-LAW-9)).
 6. ⬜ Mobile / touch input.
-7. ⬜ Re-port switches + gated doors onto the engine (see [CUR-A1](AMENDMENTS.md#CUR-A1)).
-
-### Audit log
-No story has had its original ask rewritten yet. When a story's intent changes, preserve the
-original wording here verbatim, marked "(original spec — audit log)".
+7. ⬜ Port switches + gated doors onto the engine (see [BIBLE §3](BIBLE.md#CUR-§3)).

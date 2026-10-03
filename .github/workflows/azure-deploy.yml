@@ -4,11 +4,10 @@ name: Build and deploy Cursory to Azure App Service
 #   build   — restore + publish the Cursory.Blazor host as a deployable artifact
 #   deploy  — push the artifact to the `cursory` App Service slot
 #
-# Prerequisites (set these up before flipping the deploy on):
-#   1. Provision an Azure App Service named `cursory` (Linux or Windows, .NET 10 runtime).
-#   2. Add the repo secret `AZURE_WEBAPP_PUBLISH_PROFILE` (download from the App Service
-#      → Get publish profile in the Azure portal).
-#   3. Flip `MindAttic.Deploy/projects.json → apps[]`'s `cursory` entry to `disabled: false`.
+# Requires: the Azure App Service `cursory` (.NET 10 runtime, WebSockets on), the repo secret
+# `AZURE_WEBAPP_PUBLISH_PROFILE` (App Service → Get publish profile), and the enabled `cursory`
+# entry in `MindAttic.Deploy/projects.json → apps[]`. All three exist; the App Service is
+# currently stopped, so a successful deploy is not publicly reachable until it is started.
 
 on:
   push:

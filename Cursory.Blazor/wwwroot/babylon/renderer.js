@@ -178,8 +178,8 @@ export function createWorldRenderer({ canvas, state }) {
     }
 
     // Switches/doors always ride empty arrays in the current build (server-side placeholders —
-    // see CUR-A1); these stay simple/defensive rather than pixel-matching the retired sum-of-
-    // springs art, since there is no live data to verify against today.
+    // see docs/BIBLE.md section 3); these stay simple/defensive rather than pixel-matching the
+    // canvas2d art, since there is no live data to verify against.
     function updateSwitches(switches) {
         syncById(switchMeshes, switches,
             (sw) => {

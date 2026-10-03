@@ -6,7 +6,7 @@ A cooperative multiplayer puzzle game in the browser: every player's cursor shar
 
 ![Two cursors tethered to one block in the cooperative-drag prototype; their summed pull exceeds the friction threshold and the HUD reads Moving](docs/images/cooperative-drag-prototype.png)
 
-The capture above is the standalone [cooperative-drag.html](cooperative-drag.html) prototype of the core mechanic: open it in any browser, no build needed. The full game is a Blazor Server app; its deploy target is `https://cursory.azurewebsites.net`, which is stopped at the time of writing, so there is no public demo right now.
+The capture above is the standalone [cooperative-drag.html](cooperative-drag.html) prototype of the core mechanic: open it in any browser, no build needed. The full game is a Blazor Server app. Its Azure App Service deploy target (`cursory`) is stopped, so there is no public demo: run it locally (see Quick start).
 
 ## Why
 
@@ -80,7 +80,7 @@ To feel the core mechanic without the app, open [cooperative-drag.html](cooperat
 ## How it works
 
 ```text
-        browser: three parallel renderers, one shared backend (CUR-A2)
+        browser: three parallel renderers, one shared backend
         wwwroot/shared/room-core.js  networking, input, camera, picking, HUD, audio,
                                      + the overlay (cursors/tethers/whistles/labels/minimap)
         wwwroot/{canvas2d,three,babylon}/room.js + renderer.js  world adapter only
@@ -167,7 +167,7 @@ Click empty space and the server records a `Whistle` and ships it on the next sn
 - `Services/GameLoopService.cs`: the 30 Hz `BackgroundService`. Steps `RoomState`, evicts stale cursors every 30 ticks, rebroadcasts geometry and announces a level on change, broadcasts the snapshot, idles when nobody is connected, and logs slow ticks.
 - `Components/`: `App.razor`, `Layout/MainLayout.razor`, `Pages/Login.razor`, `Pages/Error.razor`, `RedirectToLogin.razor`, `Routes.razor`.
 - `wwwroot/shared/room-core.js`: the renderer-agnostic client core. SignalR connection, `clientToWorld` transform, pan and zoom, grab picking, whistle audio, HUD (level select, reset vote, connection-status pill) and the vector and text overlay (cursors, tethers, whistle ripples, labels, mass numbers, minimap).
-- `wwwroot/canvas2d/`, `wwwroot/three/`, `wwwroot/babylon/`: one `room.js` entry point and one `renderer.js` world adapter per engine, drawing only the solid game world (grid, walls, blocks, shapes, goals, switches, doors, circuit). See [CUR-A2](docs/AMENDMENTS.md#CUR-A2).
+- `wwwroot/canvas2d/`, `wwwroot/three/`, `wwwroot/babylon/`: one `room.js` entry point and one `renderer.js` world adapter per engine, drawing only the solid game world (grid, walls, blocks, shapes, goals, switches, doors, circuit). See [docs/BIBLE.md](docs/BIBLE.md), section 4.4.
 - Two auth endpoints: `POST /api/auth/login` (antiforgery, rate limit, open-redirect guard; issues the cookie) and `POST /api/auth/logout`.
 
 ## Accounts
@@ -212,7 +212,7 @@ The realtime UI and SignalR path are exercised by hand only; there is no automat
 - Click the block to attach a cursor at that point; release and click again to attach another while the first stays put. Re-grab a cursor by clicking near its head.
 - A live HUD prints the net force and whether the block is "Moving" or "Below threshold" (green or grey block).
 
-It is a quick way to feel why two cursors are needed to move a heavy block. It is not wired to the current game: the shipped app replaced the spring model with Aether.Physics2D rigid bodies, `FrictionJoint`s and `FixedMouseJoint` grabs (see [CUR-A1](docs/AMENDMENTS.md#CUR-A1)). The file is not part of the solution and is not built, tested or served by `Cursory.Blazor`.
+It is a quick way to feel why two cursors are needed to move a heavy block. It is not wired to the current game: the game uses Aether.Physics2D rigid bodies, `FrictionJoint`s and `FixedMouseJoint` grabs instead of springs (see [docs/BIBLE.md](docs/BIBLE.md), section 3). The file is not part of the solution and is not built, tested or served by `Cursory.Blazor`.
 
 ## Project layout
 
@@ -251,15 +251,7 @@ Cursory/
 
 ## Deployment
 
-The workflow at [.github/workflows/azure-deploy.yml](.github/workflows/azure-deploy.yml) runs on push to `main` (or manually): restore, publish `Cursory.Blazor`, upload the artifact, then deploy it to the `cursory` Azure App Service (Production slot) using the `AZURE_WEBAPP_PUBLISH_PROFILE` repository secret. The target address is `https://cursory.azurewebsites.net`.
-
-One-time setup:
-
-1. Provision an Azure App Service named `cursory` (.NET 10 runtime, Linux or Windows).
-2. Download the publish profile from the App Service in the Azure portal.
-3. Add it as the GitHub secret `AZURE_WEBAPP_PUBLISH_PROFILE` on `mindattic/Cursory`.
-4. Push to `main`.
-5. Set the `cursory` entry in `MindAttic.Deploy/projects.json` (`apps[]`) to `disabled: false`.
+The workflow at [.github/workflows/azure-deploy.yml](.github/workflows/azure-deploy.yml) runs on push to `main` (or manually): restore, publish `Cursory.Blazor`, upload the artifact, then deploy it to the `cursory` Azure App Service (Production slot) using the `AZURE_WEBAPP_PUBLISH_PROFILE` repository secret. The secret is set, the `cursory` entry in `MindAttic.Deploy/projects.json` is enabled, and the workflow runs succeed, but the App Service is stopped, so nothing is served publicly. Start the App Service (with WebSockets enabled, which SignalR needs) to bring an instance up.
 
 ## Limitations
 
@@ -285,9 +277,9 @@ Planned, not built:
 This repo follows the MindAttic Codex documentation standard; canon lives in `docs/`, each fact in exactly one layer:
 
 - [docs/BIBLE.md](docs/BIBLE.md): what Cursory is and is not, architecture canon, the Laws (`CUR-LAW-1` to `CUR-LAW-9`), verified state, active frontier, quality bar, glossary.
-- [docs/AMENDMENTS.md](docs/AMENDMENTS.md): append-only change log; an amendment wins over the bible. `CUR-A1` (rigid bodies replace sum-of-springs), `CUR-A2` (three parallel renderers).
+- [docs/AMENDMENTS.md](docs/AMENDMENTS.md): pending decisions not yet folded into the bible (normally empty).
 - [`docs/USER_STORIES.md`](docs/USER%5FSTORIES.md): `CUR-US` stories; every done story cites its verifying NUnit test.
-- [docs/rfc/](docs/rfc): design notes that graduate into the bible and stories.
+- [docs/rfc/](docs/rfc): open design notes (currently RFC 0001, multiple rooms and per-room persistence).
 - [docs/BIBLE.digest.md](docs/BIBLE.digest.md): generated by `tools/codex.ps1 digest`; never hand-edited.
 - [AGENTS.md](AGENTS.md): instructions for coding agents working in this repo.
 
