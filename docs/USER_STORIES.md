@@ -107,3 +107,12 @@ Dependency-ordered toward a shippable shared instance:
 5. 🟡 Adopt `MindAttic.Authentication` ([HOUSE-LAW-7]; deviation [CUR-LAW-9](BIBLE.md#CUR-LAW-9)).
 6. ⬜ Mobile / touch input.
 7. ⬜ Port switches + gated doors onto the engine (see [BIBLE §3](BIBLE.md#CUR-§3)).
+
+## Tickets
+> Permanent log of every change and fix — this repo's ticket system. Rows are append-only: never
+> delete or reword one; only move its Status (open → closed / wont-do) and fill in Ref. Status is
+> a word, not a glyph, so tickets don't count toward the story index. Keep this section last.
+
+| ID | Date | Type | Status | Summary | Ref |
+|---|---|---|---|---|---|
+| CUR-T1 | 2026-10-12 | docs | closed | Start the permanent ticket log in USER_STORIES.md | — |
