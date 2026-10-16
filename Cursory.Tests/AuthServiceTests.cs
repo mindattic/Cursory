@@ -131,6 +131,167 @@ public class AuthServiceTests
     }
 
     [Test]
+    public void CreateUser_rejects_invalid_role()
+    {
+        Assert.Throws<ArgumentException>(() =>
+            auth.CreateUser("newuser", "New User", "Strong1!", "SuperAdmin", "#7F77DD"));
+    }
+
+    [Test]
+    public void CreateUser_rejects_duplicate_username_case_insensitively()
+    {
+        auth.CreateUser("Taken", "First", "Strong1!", UserRoles.Player, "#7F77DD");
+        Assert.Throws<InvalidOperationException>(() =>
+            auth.CreateUser("TAKEN", "Second", "Strong2!", UserRoles.Player, "#7F77DD"));
+        Assert.That(repo.Count, Is.EqualTo(1));
+    }
+
+    [Test]
+    public void CreateUser_trims_username()
+    {
+        var user = auth.CreateUser("  spaced  ", "Spaced", "Strong1!", UserRoles.Player, "#7F77DD");
+        Assert.That(user.Username, Is.EqualTo("spaced"));
+    }
+
+    [Test]
+    public void CreateUser_sanitizes_display_name()
+    {
+        var user = auth.CreateUser("htmluser", "<b>Bold</b>  Name", "Strong1!", UserRoles.Player, "#7F77DD");
+        Assert.That(user.DisplayName, Is.EqualTo("Bold Name"));
+    }
+
+    [Test]
+    public void ChangePassword_hashes_new_password_rotates_stamp_and_clears_must_change()
+    {
+        var user = auth.CreateUser("changer", "Changer", "Strong1!", UserRoles.Player, "#7F77DD");
+        var oldHash = user.PasswordHash;
+        var oldStamp = user.SecurityStamp;
+        user.MustChangePassword = true;
+        repo.Update(user);
+
+        auth.ChangePassword(user.Id, "Strongest2!");
+
+        var updated = repo.GetById(user.Id)!;
+        Assert.That(updated.PasswordHash, Is.Not.EqualTo(oldHash));
+        Assert.That(updated.SecurityStamp, Is.Not.EqualTo(oldStamp));
+        Assert.That(updated.MustChangePassword, Is.False);
+        Assert.That(auth.Authenticate("changer", "Strongest2!"), Is.Not.Null);
+        Assert.That(auth.Authenticate("changer", "Strong1!"), Is.Null);
+    }
+
+    [Test]
+    public void ChangePassword_throws_for_unknown_user()
+    {
+        Assert.Throws<InvalidOperationException>(() =>
+            auth.ChangePassword(Guid.NewGuid().ToString(), "Strongest2!"));
+    }
+
+    [Test]
+    public void ChangePassword_throws_for_weak_password()
+    {
+        var user = auth.CreateUser("weakchanger", "Weak Changer", "Strong1!", UserRoles.Player, "#7F77DD");
+        Assert.Throws<ArgumentException>(() => auth.ChangePassword(user.Id, "weak"));
+    }
+
+    [TestCase("")]
+    [TestCase(null)]
+    public void ChangePasswordWithVerification_rejects_empty_current_password(string? currentPassword)
+    {
+        var user = auth.CreateUser("verifier", "Verifier", "Strong1!", UserRoles.Player, "#7F77DD");
+        Assert.Throws<ArgumentException>(() =>
+            auth.ChangePasswordWithVerification(user.Id, currentPassword!, "Strongest2!"));
+    }
+
+    [Test]
+    public void ChangePasswordWithVerification_rejects_wrong_current_password()
+    {
+        var user = auth.CreateUser("verifier2", "Verifier Two", "Strong1!", UserRoles.Player, "#7F77DD");
+        Assert.Throws<ArgumentException>(() =>
+            auth.ChangePasswordWithVerification(user.Id, "WrongPass1!", "Strongest2!"));
+        Assert.That(auth.Authenticate("verifier2", "Strong1!"), Is.Not.Null, "password unchanged after rejection");
+    }
+
+    [Test]
+    public void ChangePasswordWithVerification_succeeds_with_correct_current_password()
+    {
+        var user = auth.CreateUser("verifier3", "Verifier Three", "Strong1!", UserRoles.Player, "#7F77DD");
+        auth.ChangePasswordWithVerification(user.Id, "Strong1!", "Strongest2!");
+        Assert.That(auth.Authenticate("verifier3", "Strongest2!"), Is.Not.Null);
+        Assert.That(auth.Authenticate("verifier3", "Strong1!"), Is.Null);
+    }
+
+    [TestCase(null, "Password is required.")]
+    [TestCase("", "Password is required.")]
+    [TestCase("Ab1!", "Password must be at least 8 characters.")]
+    [TestCase("NoSpecial123", "Password must contain at least one special character: ~!@#$%^&*()-_=+'.,")]
+    [TestCase("lowercase1!", "Password must contain at least one uppercase letter.")]
+    [TestCase("UPPERCASE1!", "Password must contain at least one lowercase letter.")]
+    [TestCase("NoDigitsHere!", "Password must contain at least one number.")]
+    [TestCase("Aa1!\0Aa1", "Password contains invalid characters.")]
+    [TestCase("Strong1!", null)]
+    public void GetPasswordError_validates_each_rule(string? password, string? expected)
+    {
+        Assert.That(AuthService.GetPasswordError(password!), Is.EqualTo(expected));
+    }
+
+    [Test]
+    public void GetPasswordError_rejects_password_over_bcrypt_limit()
+    {
+        var tooLong = "Aa1!" + new string('a', 69); // 73 chars total
+        Assert.That(AuthService.GetPasswordError(tooLong),
+            Is.EqualTo("Password must not exceed 72 characters (BCrypt limit)."));
+    }
+
+    [TestCase(null)]
+    [TestCase("")]
+    [TestCase("   ")]
+    public void ValidateUsername_rejects_blank(string? username)
+    {
+        Assert.Throws<ArgumentException>(() => AuthService.ValidateUsername(username!));
+    }
+
+    [Test]
+    public void ValidateUsername_rejects_too_long()
+    {
+        var tooLong = new string('a', 51);
+        Assert.Throws<ArgumentException>(() => AuthService.ValidateUsername(tooLong));
+    }
+
+    [TestCase("ba d!")]
+    [TestCase("ab")]
+    public void ValidateUsername_rejects_bad_characters_or_under_minimum_length(string username)
+    {
+        Assert.Throws<ArgumentException>(() => AuthService.ValidateUsername(username));
+    }
+
+    [Test]
+    public void ValidateUsername_accepts_three_character_minimum()
+    {
+        Assert.DoesNotThrow(() => AuthService.ValidateUsername("abc"));
+    }
+
+    [TestCase(null)]
+    [TestCase("")]
+    [TestCase("   ")]
+    public void ValidateDisplayName_rejects_blank(string? displayName)
+    {
+        Assert.Throws<ArgumentException>(() => AuthService.ValidateDisplayName(displayName!));
+    }
+
+    [Test]
+    public void ValidateDisplayName_rejects_too_long()
+    {
+        var tooLong = new string('a', 101);
+        Assert.Throws<ArgumentException>(() => AuthService.ValidateDisplayName(tooLong));
+    }
+
+    [Test]
+    public void ValidateDisplayName_rejects_nul_character()
+    {
+        Assert.Throws<ArgumentException>(() => AuthService.ValidateDisplayName("Bad\0Name"));
+    }
+
+    [Test]
     public void Lockout_triggers_after_ten_failures_and_blocks_correct_password()
     {
         auth.SeedUser("locked", "Locked", "Happygirl1005", UserRoles.Player, "#000000");
