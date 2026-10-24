@@ -1,0 +1,12 @@
+﻿{
+    "protocolVersion":  "1.1",
+    "updatedAt":  "2026-10-21T13:29:15.9756108Z",
+    "task":  "Archive mindattic/Cursory on GitHub and remove the wip topic/tag.",
+    "decisions":  "Confirmed with user before acting (archive is a visible, shared-state change). Kept all other 9 topics (software, blazor, browser-game, cooperative-game, dotnet, mindattic, multiplayer, physics, signalr) and only removed wip.",
+    "state":  "Repo mindattic/Cursory is archived (isArchived=true) and wip topic is removed. Verified via gh repo view after both operations. No code/file changes in the working tree.",
+    "next":  "No follow-up required for this task. If Cursory is un-archived later for continued work, the wip topic was intentionally not re-added.",
+    "queued":  [
+
+               ],
+    "universe":  ""
+}
