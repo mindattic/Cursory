@@ -11,6 +11,8 @@ using Cursory.Blazor.Services;
 using Cursory.Core.Models;
 using Cursory.Core.Services;
 
+if (MindAttic.Vault.Settings.Manifest.SettingsManifestCommand.TryRun<CursorySettings>(args)) return;
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Dev-only convenience: a gitignored .env at the repo root (KEY=VALUE per line, '#' comments
