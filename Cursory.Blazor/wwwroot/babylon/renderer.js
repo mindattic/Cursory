@@ -71,7 +71,9 @@ export function createWorldRenderer({ canvas, state }) {
             updater(obj, item);
         }
         for (const [id, obj] of map) {
-            if (!seen.has(id)) { obj.dispose(); map.delete(id); }
+            // dispose(doNotRecurse=false, disposeMaterialAndTextures=true): each mesh owns its own
+            // StandardMaterial, which a bare dispose() would leak on every level switch.
+            if (!seen.has(id)) { obj.dispose(false, true); map.delete(id); }
         }
     }
 
@@ -118,7 +120,7 @@ export function createWorldRenderer({ canvas, state }) {
     function ensureWalls(walls) {
         if (wallsRef === walls) return;
         wallsRef = walls;
-        if (wallRoot) wallRoot.dispose();
+        if (wallRoot) wallRoot.dispose(false, true);
         wallRoot = new BABYLON.TransformNode('walls', scene);
         (walls || []).forEach((w, i) => {
             const mesh = makeFlatRect(scene, 'wall' + i, w.w, w.h, '#2a2a2a');

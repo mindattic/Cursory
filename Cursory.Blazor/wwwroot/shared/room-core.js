@@ -402,6 +402,7 @@ export async function start(opts, createWorldRenderer) {
             }
         }
     });
+    const myConnection = connection;
     try {
         await connection.start();
         state.connection.status = 'connected';
@@ -411,6 +412,9 @@ export async function start(opts, createWorldRenderer) {
         state.connection.status = 'disconnected';
         renderStatus();
     }
+    // stop() ran while the hub was connecting (page left mid-connect): it already tore down
+    // the canvas/listeners, so don't start a render loop against them.
+    if (connection !== myConnection) return;
 
     raf = requestAnimationFrame(loop);
 }

@@ -185,6 +185,16 @@ public class RoomState
         cursors.TryRemove(userId, out _);
     }
 
+    /// <summary>Drop a player only if <paramref name="connectionId"/> is still the connection their
+    /// cursor is bound to. A hub disconnect for a superseded connection (a SignalR auto-reconnect
+    /// whose old socket times out after the new one registered, or a second tab closing) must not
+    /// evict the cursor — and release the grab — of the connection that is still live.</summary>
+    public void RemovePlayer(string userId, string connectionId)
+    {
+        if (!cursors.TryGetValue(userId, out var c) || c.ConnectionId != connectionId) return;
+        RemovePlayer(userId);
+    }
+
     /// <summary>Client → server cursor input (world coords). Server-clamped; NaN dropped.
     /// Returns false if there is no cursor registered for <paramref name="userId"/> — the
     /// caller can use that to re-register a player whose cursor was evicted while their tab

@@ -166,7 +166,9 @@ else if (Engine == "babylon")
         if (jsModule is not null)
         {
             try { await jsModule.InvokeVoidAsync("stop"); } catch { }
-            await jsModule.DisposeAsync();
+            // The circuit may already be gone (tab closed / connection lost), in which case
+            // disposing the JS module reference throws JSDisconnectedException.
+            try { await jsModule.DisposeAsync(); } catch (JSDisconnectedException) { }
         }
     }
 }

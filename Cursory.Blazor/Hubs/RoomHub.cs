@@ -37,7 +37,7 @@ public class RoomHub : Hub
     public override Task OnDisconnectedAsync(Exception? exception)
     {
         var userId = Context.User?.FindFirst("UserId")?.Value;
-        if (!string.IsNullOrEmpty(userId)) room.RemovePlayer(userId);
+        if (!string.IsNullOrEmpty(userId)) room.RemovePlayer(userId, Context.ConnectionId);
         return base.OnDisconnectedAsync(exception);
     }
 

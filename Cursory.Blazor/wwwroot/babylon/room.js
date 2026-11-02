@@ -17,11 +17,18 @@ async function waitForGlobal(name, timeoutMs = 5000) {
     return true;
 }
 
+// Bumped by every start()/stop(), so a start() still waiting on the CDN global when the page is
+// left (stop() already ran) doesn't go on to open a room nobody will ever stop.
+let generation = 0;
+
 export async function start(opts) {
+    const my = ++generation;
     if (!(await waitForGlobal('BABYLON'))) { console.error('[cursory] babylon.js not loaded'); return; }
+    if (my !== generation) return;
     return coreStart(opts, createWorldRenderer);
 }
 
 export async function stop() {
+    generation++;
     return coreStop();
 }

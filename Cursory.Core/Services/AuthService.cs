@@ -211,8 +211,13 @@ public class AuthService
     {
         lock (lockoutLock)
         {
-            var current = failedAttempts.TryGetValue(username, out var record) ? record.count : 0;
-            failedAttempts[username] = (current + 1, DateTime.UtcNow);
+            var now = DateTime.UtcNow;
+            // Failures count within a LockoutDuration window of the previous one. Without this,
+            // a stale count (eviction only runs every 100 records, which a two-account room may
+            // never reach) keeps accumulating, so ten typos spread over days lock the account.
+            var current = failedAttempts.TryGetValue(username, out var record)
+                && now - record.lastAttempt < LockoutDuration ? record.count : 0;
+            failedAttempts[username] = (current + 1, now);
 
             recordsSinceCleanup++;
             if (recordsSinceCleanup >= 100 || failedAttempts.Count > MaxLockoutEntries)
