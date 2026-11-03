@@ -52,6 +52,31 @@ public class VoteAndLevelTests
     }
 
     /// <summary>
+    /// A voter who disconnects leaves the roster and the quorum is recomputed over who is left:
+    /// 3 voters (quorum 2) with one YES, one undecided leaving → 2 voters, quorum 2, still open;
+    /// then the other undecided leaving → 1 voter, quorum 1, the initiator's YES passes it.
+    /// </summary>
+    [Test]
+    public void Voter_disconnect_recomputes_quorum()
+    {
+        var room = new RoomState();
+        room.AddOrUpdatePlayer("u1", "c1", "U1", "#fff");
+        room.AddOrUpdatePlayer("u2", "c2", "U2", "#000");
+        room.AddOrUpdatePlayer("u3", "c3", "U3", "#888");
+        room.StartResetVote("u1");
+        Assert.That(room.CurrentVote!.Quorum, Is.EqualTo(2));
+
+        room.RemovePlayer("u3", "c3");
+        var v = room.CurrentVote;
+        Assert.That(v, Is.Not.Null);
+        Assert.That(v!.Voters, Is.EquivalentTo(new[] { "u1", "u2" }));
+        Assert.That(v.Quorum, Is.EqualTo(2));
+
+        room.RemovePlayer("u2", "c2");
+        Assert.That(room.CurrentVote, Is.Null, "Only the initiator is left: quorum 1, already met.");
+    }
+
+    /// <summary>
     /// A successful level-switch vote moves CurrentLevel and queues geometry rebroadcast + level announcement.
     /// </summary>
     [Test]

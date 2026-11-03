@@ -183,7 +183,27 @@ public class RoomState
     {
         Detach(userId);
         cursors.TryRemove(userId, out _);
+        DropVoter(userId);
     }
+
+    /// <summary>A voter who left can no longer vote, so take them out of the active vote's roster
+    /// and recompute its quorum over the voters still here; otherwise a departed voter's missing
+    /// YES would hold the vote open until it times out (or make it unreachable).</summary>
+    private void DropVoter(string userId)
+    {
+        lock (voteLock)
+        {
+            if (activeVote is null || !activeVote.Voters.Remove(userId)) return;
+            activeVote.YesUserIds.Remove(userId);
+            activeVote.NoUserIds.Remove(userId);
+            if (activeVote.Voters.Count == 0) { activeVote = null; return; }
+            activeVote.Quorum = QuorumFor(activeVote.Voters.Count);
+            ResolveVoteIfReady();
+        }
+    }
+
+    /// <summary>YES votes needed to pass: ceil(2/3 × voters).</summary>
+    private static int QuorumFor(int voters) => (int)Math.Ceiling(voters * 2.0 / 3.0);
 
     /// <summary>Drop a player only if <paramref name="connectionId"/> is still the connection their
     /// cursor is bound to. A hub disconnect for a superseded connection (a SignalR auto-reconnect
@@ -863,7 +883,7 @@ public class RoomState
             if (!cursors.ContainsKey(userId)) return false;
             var voters = cursors.Keys.ToList();
             if (voters.Count == 0) return false;
-            var quorum = (int)Math.Ceiling(voters.Count * 2.0 / 3.0);
+            var quorum = QuorumFor(voters.Count);
             activeVote = new RoomVote
             {
                 Kind = kind,

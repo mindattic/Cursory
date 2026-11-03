@@ -11,7 +11,9 @@ public class CursorState
     public string UserId { get; set; } = "";
     public string DisplayName { get; set; } = "";
     public string Color { get; set; } = "#7F77DD";
-    public string ConnectionId { get; set; } = "";
+    /// <summary>SignalR connection that owns this cursor. Server-internal: kept off the wire
+    /// [CUR-LAW-4] so one client never learns another's connection id.</summary>
+    [JsonIgnore] public string ConnectionId { get; set; } = "";
 
     /// <summary>World-space x. 0..WORLD_W. Client-reported, server-clamped.</summary>
     public double X { get; set; }
