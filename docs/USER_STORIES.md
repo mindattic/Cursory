@@ -139,3 +139,7 @@ Dependency-ordered toward a shippable shared instance:
 | CUR-T21 | 2026-10-31 | chore | closed | Redeploy Cursory to Azure (npm run deploy -- --app cursory in MindAttic.Deploy) now that the repo is unarchived and CUR-T19's Vault settings are pushed | Azure deploy run 41256868846 succeeded (after CUR-T22); App Service 'cursory' (rg MyApps) is Stopped, so it isn't serving until started |
 | CUR-T22 | 2026-10-31 | fix | closed | Cursory's Azure deploy fails on GitHub: NuGet.config (CUR-T19) points at C:\LocalNuGet, which build agents don't have (NU1301); vendor the MindAttic packages in the repo like Ideas/Unity.Multiplayer | 626695d; Azure deploy run 41256868846 restored and succeeded |
 | CUR-T23 | 2026-10-31 | docs | closed | Update USER_STORIES.md | — |
+| CUR-T24 | 2026-11-02 | fix | closed | Bughunt sweep, two passes: find and fix real bugs across tracked source (user request 2026-11-02) | — |
+| CUR-T25 | 2026-11-02 | fix | closed | Command pointer in .agent/commands said a literal $source instead of its legacy path (install.ps1 escaping bug fixed in MAT-T84); point it at the real source, or the global command when the project copy is gone | — |
+| CUR-T26 | 2026-11-02 | fix | closed | Fix the open items the 2026-11-02 bughunt left for decision (no ConnectionId in snapshots, vote quorum on disconnect) | — |
+| CUR-T27 | 2026-11-10 | chore | closed | Crash recovery: commit the command-catalog sync (.agent/commands/*.md) and regenerated docs/USER_STORIES.md left uncommitted by the session crash | — |
